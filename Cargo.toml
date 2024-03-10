@@ -1,0 +1,11 @@
+[package]
+name    = "nsave"
+version = "0.1.0"
+authors = [ "LiChunhui" ]
+edition = "2021"
+
+[dependencies]
+pcap       = "1.1.0"
+etherparse = "0.13.0"
+ctrlc      = "3.4.2"
+tmohash = { path = "../tmo_hash", version = "0.1.0"}
