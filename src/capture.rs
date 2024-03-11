@@ -1,5 +1,3 @@
-#![allow (dead_code)]
-
 use pcap::Capture as PcapCap;
 use pcap::Offline;
 use std::path::Path;
@@ -26,7 +24,7 @@ impl Capture {
     pub fn next_packet(&mut self, timestamp: u128) -> Result<Arc<Packet>, CaptureError> {
         match self.cap.next_packet() {
             Ok(pcap_pkt) => {
-                Ok( Arc::new(Packet::new(pcap_pkt.data.to_vec(), timestamp))  )
+                Ok(Arc::new(Packet::new(pcap_pkt.data.to_vec(), timestamp)))
             }
             Err(_) => Err(CaptureError::CapErr)
         }

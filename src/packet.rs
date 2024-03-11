@@ -101,6 +101,12 @@ impl Packet {
             false
         }
     }
+
+    pub fn payload(&self) -> &[u8] {
+        let offset = self.header.borrow().as_ref().unwrap().payload_offset;
+        let len = self.header.borrow().as_ref().unwrap().payload_len;
+        &self.data[offset..offset + len]
+    }
     
     pub fn payload_len(&self) -> u32 {
         self.header.borrow().as_ref().unwrap().payload_len.try_into().unwrap()
@@ -231,7 +237,84 @@ pub struct PacketKey {
 mod tests {
     use super::*;
     use etherparse::*;
+    use std::hash::{Hash, Hasher};
+    use std::collections::hash_map::DefaultHasher;
+    
+    #[test]
+    fn test_decode() {
+        let pkt = build_tcp([1,1,1,1], [2,2,2,2], 1, 2);
+        let _ = pkt.decode();
 
+        if let Some(IpHeader::Version4(ipv4h, _)) = &pkt.header.borrow().as_ref().unwrap().ip {
+            assert_eq!(Ipv4Addr::new(1, 1, 1, 1), <[u8; 4] as std::convert::Into<IpAddr>>::into(ipv4h.source));
+            assert_eq!(Ipv4Addr::new(2, 2, 2, 2), <[u8; 4] as std::convert::Into<IpAddr>>::into(ipv4h.destination));            
+        }
+        assert_eq!(TransProto::Tcp, pkt.trans_proto());        
+        assert_eq!(1, pkt.sport());
+        assert_eq!(2, pkt.dport());
+        assert!(!pkt.syn());
+        assert_eq!(1234, pkt.seq());
+        assert!(pkt.fin());
+        assert_eq!(10, pkt.payload_len());
+        assert_eq!([1,2,3,4,5,6,7,8,9,10], pkt.payload());
+    }
+
+    #[test]
+    fn test_key() {
+        let pkt = build_tcp([1,1,1,1], [2,2,2,2], 1, 2);
+        let _ = pkt.decode();
+        let key = PacketKey {
+            addr1: Ipv4Addr::new(2, 2, 2, 2).into(),
+            port1: 2,
+            addr2: Ipv4Addr::new(1, 1, 1, 1).into(),
+            port2: 1,
+            trans_proto: TransProto::Tcp
+        };
+        assert_eq!(key, pkt.hahs_key());
+
+        let pkt = build_tcp([1,1,1,1], [1,1,1,1], 1, 2);
+        let _ = pkt.decode();
+        let key = PacketKey {
+            addr1: Ipv4Addr::new(1, 1, 1, 1).into(),
+            port1: 2,
+            addr2: Ipv4Addr::new(1, 1, 1, 1).into(),
+            port2: 1,
+            trans_proto: TransProto::Tcp
+        };
+        assert_eq!(key, pkt.hahs_key());
+
+        let pkt = build_tcp([1,1,1,1], [1,1,1,1], 1, 1);
+        let _ = pkt.decode();
+        let key = PacketKey {
+            addr1: Ipv4Addr::new(1, 1, 1, 1).into(),
+            port1: 1,
+            addr2: Ipv4Addr::new(1, 1, 1, 1).into(),
+            port2: 1,
+            trans_proto: TransProto::Tcp
+        };
+        assert_eq!(key, pkt.hahs_key());
+    }
+
+    #[test]
+    fn test_hash() {
+        let pkt_c2s = build_tcp([1,1,1,1], [2,2,2,2], 1, 2);
+        let _ = pkt_c2s.decode();
+        let pkt_s2c = build_tcp([2,2,2,2], [1,1,1,1], 2, 1);
+        let _ = pkt_s2c.decode();
+        let pkt_other = build_tcp([1,1,1,1], [2,2,2,2], 1, 3);
+        let _ = pkt_other.decode();
+
+        assert_eq!(pkt_c2s.hahs_key(), pkt_s2c.hahs_key());
+        assert_eq!(calculate_hash(&pkt_c2s), calculate_hash(&pkt_s2c));
+        assert_ne!(calculate_hash(&pkt_c2s), calculate_hash(&pkt_other));
+    }
+
+    fn calculate_hash<T: Hash>(t: &T) -> u64 {
+        let mut s = DefaultHasher::new();
+        t.hash(&mut s);
+        s.finish()
+    }
+    
     fn build_tcp(sip: [u8; 4], dip: [u8; 4], sport: u16, dport: u16) -> Packet {
         let builder = PacketBuilder::
         ethernet2([1,2,3,4,5,6],     //source mac
@@ -246,6 +329,7 @@ mod tests {
         //set additional tcp header fields
             .ns() //set the ns flag
         //supported flags: ns(), fin(), syn(), rst(), psh(), ece(), cwr()
+            .fin()
             .ack(123) //ack flag + the ack number
             .urg(23) //urg flag + urgent pointer
             .options(&[
