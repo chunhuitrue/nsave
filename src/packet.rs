@@ -305,11 +305,11 @@ mod tests {
         let _ = pkt_other.decode();
 
         assert_eq!(pkt_c2s.hahs_key(), pkt_s2c.hahs_key());
-        assert_eq!(calculate_hash(&pkt_c2s), calculate_hash(&pkt_s2c));
-        assert_ne!(calculate_hash(&pkt_c2s), calculate_hash(&pkt_other));
+        assert_eq!(hash_value(&pkt_c2s), hash_value(&pkt_s2c));
+        assert_ne!(hash_value(&pkt_c2s), hash_value(&pkt_other));
     }
 
-    fn calculate_hash<T: Hash>(t: &T) -> u64 {
+    fn hash_value<T: Hash>(t: &T) -> u64 {
         let mut s = DefaultHasher::new();
         t.hash(&mut s);
         s.finish()
