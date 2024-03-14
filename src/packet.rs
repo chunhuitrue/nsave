@@ -7,6 +7,7 @@ use std::ops::Deref;
 use std::hash::{Hash, Hasher};
 use std::net::IpAddr;
 use std::net::Ipv4Addr;
+use std::collections::hash_map::DefaultHasher;
 
 #[derive(Eq, PartialEq, Clone, Debug)]
 pub struct PktHeader {
@@ -187,6 +188,10 @@ impl Packet {
             }
         }
     }
+
+    pub fn hash_value(&self) -> u64 {
+        hash_val(self)
+    }
 }
 
 impl Deref for Packet {
@@ -216,6 +221,12 @@ impl Hash for Packet {
     }
 }
 
+fn hash_val<T: Hash>(t: &T) -> u64 {
+    let mut s = DefaultHasher::new();
+    t.hash(&mut s);
+    s.finish()
+}
+
 #[derive(Debug, Eq, PartialEq, Hash, Clone, Copy)]
 pub enum TransProto {
     Udp,
@@ -237,9 +248,7 @@ pub struct PacketKey {
 mod tests {
     use super::*;
     use etherparse::*;
-    use std::hash::{Hash, Hasher};
-    use std::collections::hash_map::DefaultHasher;
-    
+
     #[test]
     fn test_decode() {
         let pkt = build_tcp([1,1,1,1], [2,2,2,2], 1, 2);
@@ -305,16 +314,10 @@ mod tests {
         let _ = pkt_other.decode();
 
         assert_eq!(pkt_c2s.hahs_key(), pkt_s2c.hahs_key());
-        assert_eq!(hash_value(&pkt_c2s), hash_value(&pkt_s2c));
-        assert_ne!(hash_value(&pkt_c2s), hash_value(&pkt_other));
+        assert_eq!(hash_val(&pkt_c2s), hash_val(&pkt_s2c));
+        assert_ne!(hash_val(&pkt_c2s), hash_val(&pkt_other));
     }
 
-    fn hash_value<T: Hash>(t: &T) -> u64 {
-        let mut s = DefaultHasher::new();
-        t.hash(&mut s);
-        s.finish()
-    }
-    
     fn build_tcp(sip: [u8; 4], dip: [u8; 4], sport: u16, dport: u16) -> Packet {
         let builder = PacketBuilder::
         ethernet2([1,2,3,4,5,6],     //source mac
