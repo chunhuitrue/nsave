@@ -34,7 +34,7 @@ pub struct Packet {
 }
 
 impl Packet {
-    pub fn new(data: Vec<u8>, ts: u128) -> Packet {
+    pub fn new(data: Vec<u8>, ts: u128) -> Self {
         Packet {
             timestamp: ts,
             data,
@@ -123,7 +123,7 @@ impl Packet {
         }
     }
     
-    pub fn hahs_key(&self) -> PacketKey {
+    pub fn hash_key(&self) -> PacketKey {
         match &self.header.borrow().as_ref().unwrap().ip {
             Some(IpHeader::Version4(ipv4h, _)) => {
                 if ipv4h.source > ipv4h.destination {
@@ -217,7 +217,7 @@ unsafe impl Sync for Packet {}
 
 impl Hash for Packet {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.hahs_key().hash(state)
+        self.hash_key().hash(state)
     }
 }
 
@@ -237,11 +237,11 @@ pub enum TransProto {
 
 #[derive(Debug, Eq, PartialEq, Hash, Clone, Copy)]
 pub struct PacketKey {
-    addr1: IpAddr,
-    port1: u16,
-    addr2: IpAddr,
-    port2: u16,
-    trans_proto: TransProto
+    pub addr1: IpAddr,
+    pub port1: u16,
+    pub addr2: IpAddr,
+    pub port2: u16,
+    pub trans_proto: TransProto
 }
 
 #[cfg(test)]
@@ -279,7 +279,7 @@ mod tests {
             port2: 1,
             trans_proto: TransProto::Tcp
         };
-        assert_eq!(key, pkt.hahs_key());
+        assert_eq!(key, pkt.hash_key());
 
         let pkt = build_tcp([1,1,1,1], [1,1,1,1], 1, 2);
         let _ = pkt.decode();
@@ -290,7 +290,7 @@ mod tests {
             port2: 1,
             trans_proto: TransProto::Tcp
         };
-        assert_eq!(key, pkt.hahs_key());
+        assert_eq!(key, pkt.hash_key());
 
         let pkt = build_tcp([1,1,1,1], [1,1,1,1], 1, 1);
         let _ = pkt.decode();
@@ -301,7 +301,7 @@ mod tests {
             port2: 1,
             trans_proto: TransProto::Tcp
         };
-        assert_eq!(key, pkt.hahs_key());
+        assert_eq!(key, pkt.hash_key());
     }
 
     #[test]
@@ -313,7 +313,7 @@ mod tests {
         let pkt_other = build_tcp([1,1,1,1], [2,2,2,2], 1, 3);
         let _ = pkt_other.decode();
 
-        assert_eq!(pkt_c2s.hahs_key(), pkt_s2c.hahs_key());
+        assert_eq!(pkt_c2s.hash_key(), pkt_s2c.hash_key());
         assert_eq!(hash_val(&pkt_c2s), hash_val(&pkt_s2c));
         assert_ne!(hash_val(&pkt_c2s), hash_val(&pkt_other));
     }
