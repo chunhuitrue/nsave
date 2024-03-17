@@ -13,7 +13,7 @@ use std::collections::hash_map::DefaultHasher;
 pub struct PktHeader {
     link: Option<Ethernet2Header>,
     vlan: Option<VlanHeader>,
-    ip: Option<IpHeader>,
+    pub ip: Option<IpHeader>,
     transport: Option<TransportHeader>,
     payload_offset: usize,
     payload_len: usize
@@ -63,7 +63,7 @@ impl Packet {
         }
     }
 
-    fn sport(&self) -> u16 {
+    pub fn sport(&self) -> u16 {
         match &self.header.borrow().as_ref().unwrap().transport {
             Some(TransportHeader::Udp(udph)) => udph.source_port,
             Some(TransportHeader::Tcp(tcph)) => tcph.source_port,
@@ -71,7 +71,7 @@ impl Packet {
         }
     }
 
-    fn dport(&self) -> u16 {
+    pub fn dport(&self) -> u16 {
         match &self.header.borrow().as_ref().unwrap().transport {        
             Some(TransportHeader::Udp(udph)) => udph.destination_port,
             Some(TransportHeader::Tcp(tcph)) => tcph.destination_port,

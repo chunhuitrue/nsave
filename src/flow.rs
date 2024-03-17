@@ -1,114 +1,176 @@
 #![allow (dead_code)]
 
-use crate::packet::{Packet, PacketKey};
-// use std::net::IpAddr;
+use crate::packet::{Packet, PacketKey, TransProto};
 use tmohash::TmoHash;
+use etherparse::IpHeader;
+use std::net::IpAddr;
 
 const MAX_TABLE_CAPACITY: usize = 1024;
-const NODE_TIMEOUT: u128        = 10_000_000_000; // 10秒
-
-#[derive(Debug, Clone, Copy)]
-pub enum KeyDir {
-    Addr1Client,
-    Addr2Client,
-    Unknown
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum Direction {
-    C2s,
-    S2c,
-    Unknown
-}
+const NODE_TIMEOUT: u128 = 10_000_000_000; // 10秒
+const MAX_SEQ_GAP: usize = 8;
 
 #[derive(Debug)]
 pub struct FlowNode {
     pub key: PacketKey,
-    // pub key_dir: KeyDir,
     pub last_time: u128,
-    // pub relate_pkt_dir: Direction,
+    seq_strm1: SeqStream,
+    seq_strm2: SeqStream,
 }
 
 impl FlowNode {
-    // fn new2(pkt: &Packet, now: u128) -> Self {
-    //     let key = pkt.hash_key();
-    //     let mut node = FlowNode {
-    //         key,
-    //         // key_dir: KeyDir::Unknown,
-    //         last_time: now,
-    //         // relate_pkt_dir: Direction::Unknown
-    //     };
-    //     node.update(pkt, now);
-    //     node
-    // }
-
-    fn new(pkt_key: PacketKey, now: u128) -> Self {
+    fn new(key: PacketKey, now: u128) -> Self {
         FlowNode {
-            key: pkt_key,
-            // key_dir: KeyDir::Unknown,
+            key,
             last_time: now,
-            // relate_pkt_dir: Direction::Unknown
+            seq_strm1: SeqStream::new(),
+            seq_strm2: SeqStream::new(),
         }
     }
 
-    pub fn update(&self, _pkt: &Packet, _now: u128) {
-        todo!()
+    pub fn update(&mut self, pkt: &Packet, now: u128) {
+        self.last_time = now;
+        if pkt.trans_proto() == TransProto::Tcp {
+            match &pkt.header.borrow().as_ref().unwrap().ip {
+                Some(IpHeader::Version4(ipv4h, _)) => {
+                    if self.key.addr1 == <[u8; 4] as std::convert::Into<IpAddr>>::into(ipv4h.source) && self.key.port1 == pkt.sport() {
+                        self.seq_strm1.update(pkt);
+                    } else if self.key.addr2 == <[u8; 4] as std::convert::Into<IpAddr>>::into(ipv4h.source) && self.key.port2 == pkt.sport() {
+                        self.seq_strm2.update(pkt);
+                    }
+                }
+                Some(IpHeader::Version6(ipv6h, _)) => {
+                    if self.key.addr1 == <[u8; 16] as std::convert::Into<IpAddr>>::into(ipv6h.source) && self.key.port1 == pkt.sport() {
+                        self.seq_strm1.update(pkt);
+                    } else if self.key.addr2 == <[u8; 16] as std::convert::Into<IpAddr>>::into(ipv6h.source) && self.key.port2 == pkt.sport() {
+                        self.seq_strm2.update(pkt);
+                    }
+                }
+                None => {}
+            }
+        }
     }
 
-    pub fn streams_fin(&self) -> bool {
-        todo!()
+    pub fn is_fin(&self) -> bool {
+        self.seq_strm1.is_fin() && self.seq_strm2.is_fin()
+    }
+}
+
+#[derive(Debug)]
+struct SeqSeg {
+    start: u32,
+    next: u32
+}
+
+#[derive(Debug)]
+struct SeqStream {
+    segment: Vec<SeqSeg>,
+    fin: bool,
+}
+
+impl SeqStream {
+    fn new() -> Self{
+        SeqStream {
+            segment: Vec::with_capacity(MAX_SEQ_GAP),
+            fin: false
+        }
     }
 
-    // fn client_ip(&self) -> Option<IpAddr> {
-    //     match self.key_dir {
-    //         KeyDir::Addr1Client => Some(self.key.addr1),
-    //         KeyDir::Addr2Client => Some(self.key.addr2),
-    //         KeyDir::Unknown => None
-    //     }
-    // }
+    fn update(&mut self, pkt: &Packet) {
+        if self.segment.len() > MAX_SEQ_GAP {
+            return;
+        }
 
-    // fn client_port(&self) -> u16 {
-    //     match self.key_dir {
-    //         KeyDir::Addr1Client => self.key.port1,
-    //         KeyDir::Addr2Client => self.key.port2,
-    //         KeyDir::Unknown => 0
-    //     }
-    // }
+        if pkt.fin() {
+            self.fin = true
+        }
 
-    // fn server_ip(&self) -> Option<IpAddr> {
-    //     match self.key_dir {
-    //         KeyDir::Addr1Client => Some(self.key.addr2),
-    //         KeyDir::Addr2Client => Some(self.key.addr1),
-    //         KeyDir::Unknown => None
-    //     }
-    // }
+        let new_seg = if pkt.syn() && pkt.payload_len() == 0 {
+            SeqSeg {start: pkt.seq(), next: pkt.seq() + 1}
+        } else {
+            SeqSeg {start: pkt.seq(), next: pkt.seq() + pkt.payload_len()}
+        };
 
-    // fn server_port(&self) -> u16 {
-    //     match self.key_dir {
-    //         KeyDir::Addr1Client => self.key.port2,
-    //         KeyDir::Addr2Client => self.key.port2,
-    //         KeyDir::Unknown => 0
-    //     }
-    // }
+        if self.segment.is_empty() {
+            self.segment.push(new_seg);
+            return;
+        }
 
-    // pub fn update(&mut self, pkt: &Packet, now: u128) {
-    //     self.last_time = now;
-    //     // key_dir
+        // case 1
+        // vec:                  start,next  start,next
+        // new_seg: start,next
+        if new_seg.next < self.segment[0].start{
+            self.segment.insert(0, new_seg);
+            return;
+        }
 
+        // case 2
+        // vec:           start,next  start,next
+        // new_seg: start,next
+        if new_seg.next == self.segment[0].start{
+            self.segment[0].start = new_seg.start;
+            return;
+        }
 
-    //     // pkt_dir
-    //     match self.key_dir {
-    //         KeyDir::Addr1Client => {
+        // case 3
+        // vec:     start,next  start,next
+        // new_seg:                   start,next
+        if new_seg.start == self.segment[self.segment.len() - 1].next {
+            let last_index = self.segment.len() - 1;
+            self.segment[last_index].next = new_seg.next;
+            return;
+        }
 
-    //         }
-    //         KeyDir::Addr2Client => {
+        // case 4
+        // vec:     start,next  start,next
+        // new_seg:                          start,next
+        if new_seg.start > self.segment[self.segment.len() - 1].next {
+            self.segment.push(new_seg);
+            return;
+        }
 
-    //         }
-    //         KeyDir::Unknown => {
-    //             self.relate_pkt_dir = Direction::Unknown;
-    //         }
-    //     }
-    // }
+        // 段之间段空洞情况
+        let mut i = 0;
+        while i < self.segment.len() - 1 {
+            // case 5
+            // vec:     start,next  start,next
+            // new_seg:       start,next
+            if new_seg.start == self.segment[i].next && new_seg.next == self.segment[i + 1].start {
+                self.segment[i].next = self.segment[i + 1].next;
+                self.segment.remove(i + 1);
+                return;
+            }
+
+            // case 6
+            // vec:     start,next        start,next
+            // new_seg:       start,next
+            if new_seg.start == self.segment[i].next && new_seg.next < self.segment[i + 1].start {
+                self.segment[i].next = new_seg.next;
+                return;
+            }
+
+            // case 7
+            // vec:     start,next        start,next
+            // new_seg:             start,next
+            if new_seg.start > self.segment[i].next && new_seg.next == self.segment[i + 1].start {
+                self.segment[i + 1].start = new_seg.start;
+                return;
+            }
+
+            // case 8
+            // vec:     start,next              start,next
+            // new_seg:             start,next
+            if new_seg.start > self.segment[i].next && new_seg.next < self.segment[i + 1].start {
+                self.segment.insert(i + 1, new_seg);
+                return;
+            }
+
+            i += 1;
+        }
+    }
+
+    fn is_fin(&self) -> bool {
+        self.fin && self.segment.len() == 1
+    }
 }
 
 pub struct Flow {
@@ -207,5 +269,514 @@ impl Flow {
 
     pub fn timeout(&mut self, now: u128) {
         self.table.timeout(|_key, node| now - node.last_time >= NODE_TIMEOUT)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use etherparse::*;
+
+    #[test]
+    fn test_seqstream_new() {
+        let seq_stm = SeqStream::new();
+        assert_eq!(seq_stm.segment.len(), 0);
+        assert!(!seq_stm.fin);
+    }
+
+    #[test]
+    fn test_seqstream_fin() {
+        let mut seq_stm = SeqStream::new();
+        let pkt_fin = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 10, true);
+        let _ = pkt_fin.decode();
+
+        seq_stm.update(&pkt_fin);
+        assert!(seq_stm.fin);
+        assert_eq!(1, seq_stm.segment.len());
+        assert!(seq_stm.is_fin());
+    }
+
+    // case 1.
+    #[test]
+    fn test_seqstream_pre() {
+        let mut seq_stm = SeqStream::new();
+        let pkt_syn = build_syn([1,1,1,1], [2,2,2,2], 333, 80, 1);
+        let _ = pkt_syn.decode();
+        let pkt1 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 2, false);
+        let _ = pkt1.decode();
+        let pkt2 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 12, false);
+        let _ = pkt2.decode();
+        let pkt3 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 22, false);
+        let _ = pkt3.decode();
+        let pkt_fin = build_fin([1,1,1,1], [2,2,2,2], 333, 80, 32);
+        let _ = pkt_fin.decode();
+
+        seq_stm.update(&pkt3);
+        assert_eq!(1, seq_stm.segment.len());
+        assert_eq!(22, seq_stm.segment[0].start);
+        assert_eq!(32, seq_stm.segment[0].next);
+
+        seq_stm.update(&pkt1);
+        assert_eq!(2, seq_stm.segment.len());
+
+        seq_stm.update(&pkt2);
+        assert_eq!(1, seq_stm.segment.len());
+        assert_eq!(2, seq_stm.segment[0].start);
+        assert_eq!(32, seq_stm.segment[0].next);
+
+        seq_stm.update(&pkt_syn);
+        seq_stm.update(&pkt_fin);
+        assert_eq!(1, seq_stm.segment.len());
+        assert_eq!(1, seq_stm.segment[0].start);
+        assert!(seq_stm.is_fin());
+        assert_eq!(32, seq_stm.segment[0].next);
+    }
+
+    // case 2.
+    #[test]
+    fn test_seqstream_case2() {
+        let mut seq_stm = SeqStream::new();
+        let pkt1 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 2, false);
+        let _ = pkt1.decode();
+        let pkt2 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 12, false);
+        let _ = pkt2.decode();
+        let pkt3 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 22, false);
+        let _ = pkt3.decode();
+
+        seq_stm.update(&pkt3);
+        assert_eq!(1, seq_stm.segment.len());
+        assert_eq!(22, seq_stm.segment[0].start);
+        assert_eq!(32, seq_stm.segment[0].next);
+
+        seq_stm.update(&pkt2);
+        assert_eq!(1, seq_stm.segment.len());
+        assert_eq!(12, seq_stm.segment[0].start);
+        assert_eq!(32, seq_stm.segment[0].next);
+
+        seq_stm.update(&pkt1);
+        assert_eq!(1, seq_stm.segment.len());
+        assert_eq!(2, seq_stm.segment[0].start);
+        assert_eq!(32, seq_stm.segment[0].next);
+    }
+
+    // case 3. syn, 三个连续，最后一个空fin
+    #[test]
+    fn test_seqstream_normal() {
+        let mut seq_stm = SeqStream::new();
+        let pkt_syn = build_syn([1,1,1,1], [2,2,2,2], 333, 80, 1);
+        let _ = pkt_syn.decode();
+        let pkt1 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 2, false);
+        let _ = pkt1.decode();
+        let pkt2 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 12, false);
+        let _ = pkt2.decode();
+        let pkt3 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 22, false);
+        let _ = pkt3.decode();
+        let pkt_fin = build_fin([1,1,1,1], [2,2,2,2], 333, 80, 32);
+        let _ = pkt_fin.decode();
+
+        seq_stm.update(&pkt_syn);
+        assert_eq!(1, seq_stm.segment.len());
+        assert_eq!(1, seq_stm.segment[0].start);
+        assert_eq!(2, seq_stm.segment[0].next);
+
+        seq_stm.update(&pkt1);
+        assert_eq!(1, seq_stm.segment.len());
+        assert_eq!(1, seq_stm.segment[0].start);
+        assert_eq!(12, seq_stm.segment[0].next);
+
+        seq_stm.update(&pkt2);
+        assert_eq!(1, seq_stm.segment.len());
+        assert_eq!(1, seq_stm.segment[0].start);
+        assert_eq!(22, seq_stm.segment[0].next);
+
+        seq_stm.update(&pkt3);
+        assert_eq!(1, seq_stm.segment.len());
+        assert_eq!(1, seq_stm.segment[0].start);
+        assert_eq!(32, seq_stm.segment[0].next);
+
+        seq_stm.update(&pkt_fin);
+        assert_eq!(1, seq_stm.segment.len());
+        assert_eq!(1, seq_stm.segment[0].start);
+        assert!(seq_stm.is_fin());
+        assert_eq!(32, seq_stm.segment[0].next);
+    }
+
+    // case 4
+    #[test]
+    fn test_seqstream_case4() {
+        let mut seq_stm = SeqStream::new();
+        let pkt_syn = build_syn([1,1,1,1], [2,2,2,2], 333, 80, 1);
+        let _ = pkt_syn.decode();
+        let pkt1 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 2, false);
+        let _ = pkt1.decode();
+        let pkt2 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 12, false);
+        let _ = pkt2.decode();
+        let pkt3 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 22, false);
+        let _ = pkt3.decode();
+        let pkt4 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 32, false);
+        let _ = pkt4.decode();
+        let pkt_fin = build_fin([1,1,1,1], [2,2,2,2], 333, 80, 42);
+        let _ = pkt_fin.decode();
+
+        seq_stm.update(&pkt_syn);
+        assert_eq!(1, seq_stm.segment.len());
+        assert_eq!(1, seq_stm.segment[0].start);
+        assert_eq!(2, seq_stm.segment[0].next);
+
+        seq_stm.update(&pkt2);
+        assert_eq!(2, seq_stm.segment.len());
+
+        seq_stm.update(&pkt4);
+        assert_eq!(3, seq_stm.segment.len());
+
+        seq_stm.update(&pkt1);
+        seq_stm.update(&pkt3);
+        seq_stm.update(&pkt_fin);
+        assert_eq!(1, seq_stm.segment.len());
+        assert_eq!(1, seq_stm.segment[0].start);
+        assert_eq!(42, seq_stm.segment[0].next);
+    }
+
+    // case 5 见case 1
+
+    // case 6
+    #[test]
+    fn test_seqstream_case6() {
+        let mut seq_stm = SeqStream::new();
+        let pkt_syn = build_syn([1,1,1,1], [2,2,2,2], 333, 80, 1);
+        let _ = pkt_syn.decode();
+        let pkt1 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 2, false);
+        let _ = pkt1.decode();
+        let pkt2 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 12, false);
+        let _ = pkt2.decode();
+        let pkt3 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 22, false);
+        let _ = pkt3.decode();
+        let pkt4 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 32, false);
+        let _ = pkt4.decode();
+        let pkt_fin = build_fin([1,1,1,1], [2,2,2,2], 333, 80, 42);
+        let _ = pkt_fin.decode();
+
+        seq_stm.update(&pkt_syn);
+        assert_eq!(1, seq_stm.segment.len());
+        assert_eq!(1, seq_stm.segment[0].start);
+        assert_eq!(2, seq_stm.segment[0].next);
+
+        seq_stm.update(&pkt4);
+        assert_eq!(2, seq_stm.segment.len());
+
+        seq_stm.update(&pkt1);
+        assert_eq!(2, seq_stm.segment.len());
+
+        seq_stm.update(&pkt2);
+        assert_eq!(2, seq_stm.segment.len());
+
+        seq_stm.update(&pkt3);
+        assert_eq!(1, seq_stm.segment.len());
+
+        seq_stm.update(&pkt_fin);
+        assert_eq!(1, seq_stm.segment.len());
+        assert_eq!(1, seq_stm.segment[0].start);
+        assert_eq!(42, seq_stm.segment[0].next);
+    }
+
+    // case 7
+    #[test]
+    fn test_seqstream_case7() {
+        let mut seq_stm = SeqStream::new();
+        let pkt_syn = build_syn([1,1,1,1], [2,2,2,2], 333, 80, 1);
+        let _ = pkt_syn.decode();
+        let pkt1 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 2, false);
+        let _ = pkt1.decode();
+        let pkt2 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 12, false);
+        let _ = pkt2.decode();
+        let pkt3 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 22, false);
+        let _ = pkt3.decode();
+        let pkt4 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 32, false);
+        let _ = pkt4.decode();
+        let pkt_fin = build_fin([1,1,1,1], [2,2,2,2], 333, 80, 42);
+        let _ = pkt_fin.decode();
+
+        seq_stm.update(&pkt_syn);
+        assert_eq!(1, seq_stm.segment.len());
+        assert_eq!(1, seq_stm.segment[0].start);
+        assert_eq!(2, seq_stm.segment[0].next);
+
+        seq_stm.update(&pkt_fin);
+        assert_eq!(2, seq_stm.segment.len());
+        assert!(!seq_stm.is_fin());
+
+        seq_stm.update(&pkt4);
+        assert_eq!(2, seq_stm.segment.len());
+
+        seq_stm.update(&pkt3);
+        assert_eq!(2, seq_stm.segment.len());
+
+        seq_stm.update(&pkt2);
+        assert_eq!(2, seq_stm.segment.len());
+
+        seq_stm.update(&pkt1);
+        assert_eq!(1, seq_stm.segment.len());
+        assert_eq!(1, seq_stm.segment[0].start);
+        assert_eq!(42, seq_stm.segment[0].next);
+    }
+
+    // case 8
+    #[test]
+    fn test_seqstream_case8() {
+        let mut seq_stm = SeqStream::new();
+        let pkt_syn = build_syn([1,1,1,1], [2,2,2,2], 333, 80, 1);
+        let _ = pkt_syn.decode();
+        let pkt1 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 2, false);
+        let _ = pkt1.decode();
+        let pkt2 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 12, false);
+        let _ = pkt2.decode();
+        let pkt3 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 22, false);
+        let _ = pkt3.decode();
+        let pkt4 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 32, false);
+        let _ = pkt4.decode();
+        let pkt_fin = build_fin([1,1,1,1], [2,2,2,2], 333, 80, 42);
+        let _ = pkt_fin.decode();
+
+        seq_stm.update(&pkt_syn);
+        assert_eq!(1, seq_stm.segment.len());
+        assert_eq!(1, seq_stm.segment[0].start);
+        assert_eq!(2, seq_stm.segment[0].next);
+
+        seq_stm.update(&pkt_fin);
+        assert!(!seq_stm.is_fin());
+        assert_eq!(2, seq_stm.segment.len());
+        assert_eq!(1, seq_stm.segment[0].start);
+        assert_eq!(2, seq_stm.segment[0].next);
+        assert_eq!(42, seq_stm.segment[1].start);
+        assert_eq!(42, seq_stm.segment[1].next);
+
+        dbg!("before update pkt2. segment: {}", &seq_stm.segment);
+        seq_stm.update(&pkt2);
+        dbg!("update pkt2. segment: {}", &seq_stm.segment);
+        assert_eq!(3, seq_stm.segment.len());
+        assert_eq!(1, seq_stm.segment[0].start);
+        assert_eq!(2, seq_stm.segment[0].next);
+        assert_eq!(12, seq_stm.segment[1].start);
+        assert_eq!(22, seq_stm.segment[1].next);
+        assert_eq!(42, seq_stm.segment[2].start);
+        assert_eq!(42, seq_stm.segment[2].next);
+
+        seq_stm.update(&pkt4);
+        assert_eq!(3, seq_stm.segment.len());
+        assert_eq!(1, seq_stm.segment[0].start);
+        assert_eq!(2, seq_stm.segment[0].next);
+        assert_eq!(12, seq_stm.segment[1].start);
+        assert_eq!(22, seq_stm.segment[1].next);
+        assert_eq!(32, seq_stm.segment[2].start);
+        assert_eq!(42, seq_stm.segment[2].next);
+
+        seq_stm.update(&pkt1);
+        assert_eq!(2, seq_stm.segment.len());
+        assert_eq!(1, seq_stm.segment[0].start);
+        assert_eq!(22, seq_stm.segment[0].next);
+        assert_eq!(32, seq_stm.segment[1].start);
+        assert_eq!(42, seq_stm.segment[1].next);
+
+        seq_stm.update(&pkt3);
+        assert_eq!(1, seq_stm.segment.len());
+        assert_eq!(1, seq_stm.segment[0].start);
+        assert_eq!(42, seq_stm.segment[0].next);
+        assert!(seq_stm.is_fin());
+    }
+
+    #[test]
+    fn test_node_update() {
+        let pkt_c2s = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 2, false);
+        let _ = pkt_c2s.decode();
+        let pkt_c2s_fin = build_fin([1,1,1,1], [2,2,2,2], 333, 80, 12);
+        let _ = pkt_c2s_fin.decode();
+        let pkt_s2c = build_tcp([2,2,2,2], [1,1,1,1], 80, 333, 2, false);
+        let _ = pkt_s2c.decode();
+        let pkt_s2c_fin = build_fin([2,2,2,2], [1,1,1,1], 80, 333, 12);
+        let _ = pkt_s2c_fin.decode();
+        let mut node = FlowNode::new(pkt_c2s.hash_key(), 888);
+
+        assert_eq!(888, node.last_time);
+        assert_eq!(pkt_c2s.hash_key(), node.key);
+        assert_eq!(pkt_s2c.hash_key(), node.key);
+
+        node.update(&pkt_c2s, 1000);
+        assert_eq!(1000, node.last_time);
+        assert_eq!(0, node.seq_strm1.segment.len());
+        assert_eq!(1, node.seq_strm2.segment.len());
+        assert_eq!(2, node.seq_strm2.segment[0].start);
+        assert_eq!(12, node.seq_strm2.segment[0].next);
+
+        node.update(&pkt_s2c, 1001);
+        assert_eq!(1001, node.last_time);
+        assert_eq!(1, node.seq_strm1.segment.len());
+        assert_eq!(1, node.seq_strm2.segment.len());
+        assert_eq!(2, node.seq_strm1.segment[0].start);
+        assert_eq!(12, node.seq_strm1.segment[0].next);
+
+        node.update(&pkt_c2s_fin, 1002);
+        assert_eq!(1, node.seq_strm1.segment.len());
+        assert_eq!(1, node.seq_strm2.segment.len());
+        assert!(node.seq_strm2.is_fin());
+        assert!(!node.is_fin());
+
+        node.update(&pkt_s2c_fin, 1003);
+        assert_eq!(1, node.seq_strm1.segment.len());
+        assert_eq!(1, node.seq_strm2.segment.len());
+        assert!(node.seq_strm2.is_fin());
+        assert!(node.seq_strm1.is_fin());
+        assert!(node.is_fin());
+    }
+
+    #[test]
+    fn test_flow() {
+        let pkt_c2s = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 2, false);
+        let _ = pkt_c2s.decode();
+        let pkt_c2s_fin = build_fin([1,1,1,1], [2,2,2,2], 333, 80, 12);
+        let _ = pkt_c2s_fin.decode();
+        let pkt_s2c = build_tcp([2,2,2,2], [1,1,1,1], 80, 333, 2, false);
+        let _ = pkt_s2c.decode();
+        let pkt_s2c_fin = build_fin([2,2,2,2], [1,1,1,1], 80, 333, 12);
+        let _ = pkt_s2c_fin.decode();
+        let mut flow = Flow::new();
+
+        let node = flow.get_mut_or_new(&pkt_c2s, 1000).unwrap();
+        node.update(&pkt_c2s, 1000);
+        assert_eq!(1000, node.last_time);
+        assert_eq!(0, node.seq_strm1.segment.len());
+        assert_eq!(1, node.seq_strm2.segment.len());
+        assert_eq!(2, node.seq_strm2.segment[0].start);
+        assert_eq!(12, node.seq_strm2.segment[0].next);
+        assert_eq!(1, flow.len());
+
+        let node = flow.get_mut_or_new(&pkt_s2c, 1001).unwrap();
+        node.update(&pkt_s2c, 1001);
+        assert_eq!(1001, node.last_time);
+        assert_eq!(1, node.seq_strm1.segment.len());
+        assert_eq!(1, node.seq_strm2.segment.len());
+        assert_eq!(2, node.seq_strm1.segment[0].start);
+        assert_eq!(12, node.seq_strm1.segment[0].next);
+        assert_eq!(1, flow.len());
+
+        let node = flow.get_mut_or_new(&pkt_c2s_fin, 1002).unwrap();
+        node.update(&pkt_c2s_fin, 1002);
+        let node = flow.get_mut_or_new(&pkt_s2c_fin, 1003).unwrap();
+        node.update(&pkt_s2c_fin, 1003);
+        assert!(node.is_fin());
+        let key = node.key;
+        flow.remove(&key);
+        assert_eq!(0, flow.len());
+    }
+
+    fn build_tcp(sip: [u8; 4], dip: [u8; 4], sport: u16, dport: u16, seq: u32, fin: bool) -> Packet {
+        let mut builder = PacketBuilder::
+        ethernet2([1,2,3,4,5,6],     //source mac
+                  [7,8,9,10,11,12]) //destionation mac
+            .ipv4(sip, //source ip
+                  dip, //desitionation ip
+                  20)            //time to life
+            .tcp(sport,    //source port
+                 dport,  //desitnation port
+                 seq,     //sequence number
+                 1024) //window size
+        //set additional tcp header fields
+            .ns() //set the ns flag
+        //supported flags: ns(), fin(), syn(), rst(), psh(), ece(), cwr()
+            .ack(123) //ack flag + the ack number
+            .urg(23) //urg flag + urgent pointer
+            .options(&[
+                TcpOptionElement::Noop,
+                TcpOptionElement::MaximumSegmentSize(1234)
+            ]).unwrap();
+        if fin {
+            builder = builder.fin();
+        }
+        
+        //payload of the tcp packet
+        let payload = [1,2,3,4,5,6,7,8,9,10];
+        //get some memory to store the result
+        let mut result = Vec::<u8>::with_capacity(builder.size(payload.len()));
+        //serialize
+        //this will automatically set all length fields, checksums and identifiers (ethertype & protocol)
+        builder.write(&mut result, &payload).unwrap();
+        // println!("result len:{}", result.len());
+
+        let pkt = Packet::new(result, 1);
+        let _ = pkt.decode();
+        pkt
+    }
+
+    // sync包，不带载荷
+    fn build_syn(sip: [u8; 4], dip: [u8; 4], sport: u16, dport: u16, seq: u32) -> Packet {
+        let builder = PacketBuilder::
+        ethernet2([1,2,3,4,5,6],     //source mac
+                  [7,8,9,10,11,12]) //destionation mac
+            .ipv4(sip, //source ip
+                  dip, //desitionation ip
+                  20)            //time to life
+            .tcp(sport,    //source port
+                 dport,  //desitnation port
+                 seq,     //sequence number
+                 1024) //window size
+        //set additional tcp header fields
+            .ns() //set the ns flag
+        //supported flags: ns(), fin(), syn(), rst(), psh(), ece(), cwr()
+            .syn()
+            .ack(123) //ack flag + the ack number
+            .urg(23) //urg flag + urgent pointer
+            .options(&[
+                TcpOptionElement::Noop,
+                TcpOptionElement::MaximumSegmentSize(1234)
+            ]).unwrap();
+
+        //payload of the tcp packet
+        let payload = [];
+        //get some memory to store the result
+        let mut result = Vec::<u8>::with_capacity(builder.size(payload.len()));
+        //serialize
+        //this will automatically set all length fields, checksums and identifiers (ethertype & protocol)
+        builder.write(&mut result, &payload).unwrap();
+        // println!("result len:{}", result.len());
+
+        let pkt = Packet::new(result, 1);
+        let _ = pkt.decode();
+        pkt
+    }
+
+    // fin包，不带载荷
+    fn build_fin(sip: [u8; 4], dip: [u8; 4], sport: u16, dport: u16, seq: u32) -> Packet {
+        let builder = PacketBuilder::
+        ethernet2([1,2,3,4,5,6],     //source mac
+                  [7,8,9,10,11,12]) //destionation mac
+            .ipv4(sip, //source ip
+                  dip, //desitionation ip
+                  20)            //time to life
+            .tcp(sport,    //source port
+                 dport,  //desitnation port
+                 seq,     //sequence number
+                 1024) //window size
+        //set additional tcp header fields
+            .ns() //set the ns flag
+        //supported flags: ns(), fin(), syn(), rst(), psh(), ece(), cwr()
+            .fin()
+            .ack(123) //ack flag + the ack number
+            .urg(23) //urg flag + urgent pointer
+            .options(&[
+                TcpOptionElement::Noop,
+                TcpOptionElement::MaximumSegmentSize(1234)
+            ]).unwrap();
+
+        //payload of the tcp packet
+        let payload = [];
+        //get some memory to store the result
+        let mut result = Vec::<u8>::with_capacity(builder.size(payload.len()));
+        //serialize
+        //this will automatically set all length fields, checksums and identifiers (ethertype & protocol)
+        builder.write(&mut result, &payload).unwrap();
+        // println!("result len:{}", result.len());
+
+        let pkt = Packet::new(result, 1);
+        let _ = pkt.decode();
+        pkt
     }
 }

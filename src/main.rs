@@ -99,7 +99,9 @@ fn writer_thread(running: Arc<AtomicBool>, rx: Receiver<Arc<Packet>>) {
                 if let Some(node) = flow.get_mut_or_new(&pkt, now) {
                     node.update(&pkt, now);
                     // node中挂载的其他功能，如memerge，拿出来在此次处理。不要在node process内部处理
-                    if node.streams_fin() {
+
+                    if node.is_fin() {
+                        // node中挂载的他其功能，结束调用。
                         remove_key = Some(node.key);
                     }
                 } else {
@@ -107,7 +109,6 @@ fn writer_thread(running: Arc<AtomicBool>, rx: Receiver<Arc<Packet>>) {
                     continue;
                 }
                 if let Some(key) = remove_key {
-                    // node中挂载的他其功能，结束调用。但是需要再查一次表: node = flow.get_mut_from_key(&key)
                     flow.remove(&key);
                 }
             }
