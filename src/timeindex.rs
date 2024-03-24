@@ -5,7 +5,7 @@ use chrono::{DateTime, Datelike, Local, TimeZone, Timelike};
 use std::fs::{self, File, OpenOptions};
 use std::path::PathBuf;
 
-const DATA_PATH: &str = "~/misct7/nsava_data/";
+const DATA_PATH: &str = "/Users/lch/misc/nsava_data/";
 
 pub struct TimeIndex {
     index_file: Option<IndexFile>,
@@ -41,9 +41,9 @@ fn current_index_file(timestamp: u128) -> Result<File, TimeIndexError> {
     path.push(format!("{:02}", date.hour()));
     path.push(format!("{:02}", date.minute()));
 
-    if !path.exists() && fs::create_dir_all(&path).is_err() {
-        return Err(TimeIndexError::CreatePath);
-    }
+    // if !path.exists() && fs::create_dir_all(&path).is_err() {
+    //     return Err(TimeIndexError::CreatePath);
+    // }
 
     path.push(format!("{:02}.ti", date.minute()));
     let result = OpenOptions::new()
