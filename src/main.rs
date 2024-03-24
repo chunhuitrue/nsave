@@ -109,7 +109,9 @@ fn writer_thread(running: Arc<AtomicBool>, writer_id: u64, rx: Receiver<Arc<Pack
                     node.update(&pkt, now);
 
                     if node.is_fin() {
-                        time_index.save_index(&node.key, now);
+                        time_index
+                            .save_index(&node.key, now)
+                            .expect("Failed to save index");
                         remove_key = Some(node.key);
                     }
                 } else {
@@ -132,7 +134,11 @@ fn writer_thread(running: Arc<AtomicBool>, writer_id: u64, rx: Receiver<Arc<Pack
 
         if now > prev_ts + TIMER_INTERVEL {
             prev_ts = now;
-            flow.timeout(now, |node| time_index.save_index(&node.key, now));
+            flow.timeout(now, |node| {
+                time_index
+                    .save_index(&node.key, now)
+                    .expect("time index error.")
+            });
             time_index.timer(now);
         }
     }

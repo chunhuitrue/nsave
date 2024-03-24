@@ -2,37 +2,70 @@
 
 use crate::packet::PacketKey;
 use chrono::{DateTime, Datelike, Local, TimeZone, Timelike};
+use std::cell::RefCell;
 use std::fs::{self, File, OpenOptions};
 use std::path::PathBuf;
 
+const TIMER_INTERVEL: u128 = 1_000_000_000; // 1秒
 const DATA_PATH: &str = "/Users/lch/misc/nsava_data/";
+static mut PREV_TS: u128 = 0;
 
+#[derive(Debug)]
 pub struct TimeIndex {
-    index_file: Option<IndexFile>,
+    index_file: RefCell<Option<File>>,
+    current_minute: RefCell<u32>,
 }
 
 impl TimeIndex {
     pub fn new() -> Self {
-        TimeIndex { index_file: None }
+        TimeIndex {
+            index_file: RefCell::new(None),
+            current_minute: RefCell::new(0),
+        }
     }
 
-    pub fn save_index(&self, _link: &PacketKey, _now: u128) {
-        dbg!("TimeIndex. make_index");
+    pub fn save_index(&self, _link: &PacketKey, now: u128) -> Result<(), TimeIndexError> {
+        if self.index_file.borrow().is_none() {
+            if let Ok((file, cur_minute)) = current_index_file(now) {
+                *self.index_file.borrow_mut() = Some(file);
+                *self.current_minute.borrow_mut() = cur_minute;
+            } else {
+                return Err(TimeIndexError::TimeIndex);
+            }
+        }
+
+        // todo
+        dbg!("TimeIndex. save_index");
+
+        Ok(())
     }
 
-    pub fn timer(&self, _now: u128) {
-        dbg!("TimeIndex. timeout");
-    }
-}
+    pub fn timer(&self, now: u128) {
+        unsafe {
+            if PREV_TS == 0 {
+                PREV_TS = now;
+                return;
+            }
 
-struct IndexFile {
-    file: File,
+            if now > PREV_TS + TIMER_INTERVEL {
+                PREV_TS = now;
+
+                dbg!("TimeIndex. 切换目录");
+                if let Ok((file, cur_minute)) = current_index_file(now) {
+                    // todo 刷新写入文件
+                    if *self.current_minute.borrow() != cur_minute {
+                        *self.index_file.borrow_mut() = Some(file);
+                        *self.current_minute.borrow_mut() = cur_minute;
+                    }
+                }
+            }
+        }
+    }
 }
 
 // 如果文件不存在，就创建。如果已经存在，就open。
-fn current_index_file(timestamp: u128) -> Result<File, TimeIndexError> {
+fn current_index_file(timestamp: u128) -> Result<(File, u32), TimeIndexError> {
     let date = ts_date_local(timestamp);
-
     let mut path = PathBuf::new();
     path.push(DATA_PATH);
     path.push(format!("{:04}", date.year()));
@@ -40,10 +73,9 @@ fn current_index_file(timestamp: u128) -> Result<File, TimeIndexError> {
     path.push(format!("{:02}", date.day()));
     path.push(format!("{:02}", date.hour()));
     path.push(format!("{:02}", date.minute()));
-
-    // if !path.exists() && fs::create_dir_all(&path).is_err() {
-    //     return Err(TimeIndexError::CreatePath);
-    // }
+    if !path.exists() && fs::create_dir_all(&path).is_err() {
+        return Err(TimeIndexError::CreatePath);
+    }
 
     path.push(format!("{:02}.ti", date.minute()));
     let result = OpenOptions::new()
@@ -53,7 +85,7 @@ fn current_index_file(timestamp: u128) -> Result<File, TimeIndexError> {
         .truncate(false)
         .open(&path);
     match result {
-        Ok(file) => Ok(file),
+        Ok(file) => Ok((file, date.minute())),
         Err(_) => Err(TimeIndexError::CreateFile),
     }
 }
@@ -70,46 +102,11 @@ fn ts_date_local(timestamp_nanos: u128) -> DateTime<Local> {
     )
 }
 
-// pub fn test_time(now: u128) {
-//     let timestamp_nanos = now;
-//     let naive_datetime = DateTime::from_timestamp(
-//         (timestamp_nanos / 1_000_000_000).try_into().unwrap(),
-//         (timestamp_nanos % 1_000_000_000) as u32,
-//     );
-//     let datetime_local = Local.from_utc_datetime(
-//         &naive_datetime
-//             .expect("Failed to convert to local time")
-//             .naive_utc(),
-//     );
-
-//     let year = datetime_local.year();
-//     let month = datetime_local.month();
-//     let day = datetime_local.day();
-//     let hour = datetime_local.hour();
-//     let minute = datetime_local.minute();
-//     let second = datetime_local.second();
-
-//     println!("timestamp: {}", now);
-//     println!("年：{}", year);
-//     println!("月：{}", month);
-//     println!("日：{}", day);
-//     println!("时：{}", hour);
-//     println!("分：{}", minute);
-//     println!("秒：{}", second);
-
-//     let mut path = PathBuf::new();
-//     path.push("~/misct7/data/"); // 替换为你的基础目录
-//     path.push(format!("{:04}", year));
-//     path.push(format!("{:02}", month));
-//     path.push(format!("{:02}", day));
-//     path.push(format!("{:02}", hour));
-//     path.push(format!("{:02}", minute));
-//     println!("path: {:?}", path);
-// }
-
-enum TimeIndexError {
+#[derive(Debug)]
+pub enum TimeIndexError {
     CreatePath,
     CreateFile,
+    TimeIndex,
 }
 
 #[cfg(test)]
@@ -135,13 +132,4 @@ mod tests {
         let result = current_index_file(timestamp);
         assert!(result.is_ok());
     }
-
-    // #[test]
-    // fn test_path() {
-    //     let now = SystemTime::now()
-    //         .duration_since(UNIX_EPOCH)
-    //         .unwrap()
-    //         .as_nanos();
-    //     test_time(now)
-    // }
 }
