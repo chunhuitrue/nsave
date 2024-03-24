@@ -9,4 +9,5 @@ pcap       = "1.1.0"
 etherparse = "0.13.0"
 ctrlc      = "3.4.2"
 nix        = "0.28.0"
+chrono     = "0.4.35"
 tmohash    = { path = "../tmo_hash", version = "0.1.0"}

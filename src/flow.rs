@@ -1,17 +1,18 @@
-#![allow (dead_code)]
+#![allow(dead_code)]
 
 use crate::packet::{Packet, PacketKey, TransProto};
-use tmohash::TmoHash;
 use etherparse::IpHeader;
 use std::net::IpAddr;
+use tmohash::TmoHash;
 
 const MAX_TABLE_CAPACITY: usize = 1024;
-const NODE_TIMEOUT: u128 = 10_000_000_000; // 10秒
+const NODE_TIMEOUT: u128 = 10_000_000_000; // 30秒
 const MAX_SEQ_GAP: usize = 8;
 
 #[derive(Debug)]
 pub struct FlowNode {
     pub key: PacketKey,
+    pub start_time: u128,
     pub last_time: u128,
     seq_strm1: SeqStream,
     seq_strm2: SeqStream,
@@ -21,6 +22,7 @@ impl FlowNode {
     fn new(key: PacketKey, now: u128) -> Self {
         FlowNode {
             key,
+            start_time: now,
             last_time: now,
             seq_strm1: SeqStream::new(),
             seq_strm2: SeqStream::new(),
@@ -32,16 +34,27 @@ impl FlowNode {
         if pkt.trans_proto() == TransProto::Tcp {
             match &pkt.header.borrow().as_ref().unwrap().ip {
                 Some(IpHeader::Version4(ipv4h, _)) => {
-                    if self.key.addr1 == <[u8; 4] as std::convert::Into<IpAddr>>::into(ipv4h.source) && self.key.port1 == pkt.sport() {
+                    if self.key.addr1 == <[u8; 4] as std::convert::Into<IpAddr>>::into(ipv4h.source)
+                        && self.key.port1 == pkt.sport()
+                    {
                         self.seq_strm1.update(pkt);
-                    } else if self.key.addr2 == <[u8; 4] as std::convert::Into<IpAddr>>::into(ipv4h.source) && self.key.port2 == pkt.sport() {
+                    } else if self.key.addr2
+                        == <[u8; 4] as std::convert::Into<IpAddr>>::into(ipv4h.source)
+                        && self.key.port2 == pkt.sport()
+                    {
                         self.seq_strm2.update(pkt);
                     }
                 }
                 Some(IpHeader::Version6(ipv6h, _)) => {
-                    if self.key.addr1 == <[u8; 16] as std::convert::Into<IpAddr>>::into(ipv6h.source) && self.key.port1 == pkt.sport() {
+                    if self.key.addr1
+                        == <[u8; 16] as std::convert::Into<IpAddr>>::into(ipv6h.source)
+                        && self.key.port1 == pkt.sport()
+                    {
                         self.seq_strm1.update(pkt);
-                    } else if self.key.addr2 == <[u8; 16] as std::convert::Into<IpAddr>>::into(ipv6h.source) && self.key.port2 == pkt.sport() {
+                    } else if self.key.addr2
+                        == <[u8; 16] as std::convert::Into<IpAddr>>::into(ipv6h.source)
+                        && self.key.port2 == pkt.sport()
+                    {
                         self.seq_strm2.update(pkt);
                     }
                 }
@@ -58,7 +71,7 @@ impl FlowNode {
 #[derive(Debug)]
 struct SeqSeg {
     start: u32,
-    next: u32
+    next: u32,
 }
 
 #[derive(Debug)]
@@ -68,10 +81,10 @@ struct SeqStream {
 }
 
 impl SeqStream {
-    fn new() -> Self{
+    fn new() -> Self {
         SeqStream {
             segment: Vec::with_capacity(MAX_SEQ_GAP),
-            fin: false
+            fin: false,
         }
     }
 
@@ -85,9 +98,15 @@ impl SeqStream {
         }
 
         let new_seg = if pkt.syn() && pkt.payload_len() == 0 {
-            SeqSeg {start: pkt.seq(), next: pkt.seq() + 1}
+            SeqSeg {
+                start: pkt.seq(),
+                next: pkt.seq() + 1,
+            }
         } else {
-            SeqSeg {start: pkt.seq(), next: pkt.seq() + pkt.payload_len()}
+            SeqSeg {
+                start: pkt.seq(),
+                next: pkt.seq() + pkt.payload_len(),
+            }
         };
 
         if self.segment.is_empty() {
@@ -98,7 +117,7 @@ impl SeqStream {
         // case 1
         // vec:                  start,next  start,next
         // new_seg: start,next
-        if new_seg.next < self.segment[0].start{
+        if new_seg.next < self.segment[0].start {
             self.segment.insert(0, new_seg);
             return;
         }
@@ -106,7 +125,7 @@ impl SeqStream {
         // case 2
         // vec:           start,next  start,next
         // new_seg: start,next
-        if new_seg.next == self.segment[0].start{
+        if new_seg.next == self.segment[0].start {
             self.segment[0].start = new_seg.start;
             return;
         }
@@ -174,12 +193,14 @@ impl SeqStream {
 }
 
 pub struct Flow {
-    table: TmoHash<PacketKey, FlowNode>
+    table: TmoHash<PacketKey, FlowNode>,
 }
 
 impl Flow {
     pub fn new() -> Self {
-        Flow {table: TmoHash::new(MAX_TABLE_CAPACITY)}
+        Flow {
+            table: TmoHash::new(MAX_TABLE_CAPACITY),
+        }
     }
 
     pub fn contains_key(&self, key: &PacketKey) -> bool {
@@ -267,8 +288,18 @@ impl Flow {
         self.table.clear();
     }
 
-    pub fn timeout(&mut self, now: u128) {
-        self.table.timeout(|_key, node| now - node.last_time >= NODE_TIMEOUT)
+    pub fn timeout<F>(&mut self, now: u128, fun: F)
+    where
+        F: Fn(&FlowNode),
+    {
+        self.table.timeout(|_key, node| {
+            if now - node.last_time >= NODE_TIMEOUT {
+                fun(node);
+                true
+            } else {
+                false
+            }
+        })
     }
 }
 
@@ -287,7 +318,7 @@ mod tests {
     #[test]
     fn test_seqstream_fin() {
         let mut seq_stm = SeqStream::new();
-        let pkt_fin = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 10, true);
+        let pkt_fin = build_tcp([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 10, true);
         let _ = pkt_fin.decode();
 
         seq_stm.update(&pkt_fin);
@@ -300,15 +331,15 @@ mod tests {
     #[test]
     fn test_seqstream_pre() {
         let mut seq_stm = SeqStream::new();
-        let pkt_syn = build_syn([1,1,1,1], [2,2,2,2], 333, 80, 1);
+        let pkt_syn = build_syn([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 1);
         let _ = pkt_syn.decode();
-        let pkt1 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 2, false);
+        let pkt1 = build_tcp([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 2, false);
         let _ = pkt1.decode();
-        let pkt2 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 12, false);
+        let pkt2 = build_tcp([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 12, false);
         let _ = pkt2.decode();
-        let pkt3 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 22, false);
+        let pkt3 = build_tcp([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 22, false);
         let _ = pkt3.decode();
-        let pkt_fin = build_fin([1,1,1,1], [2,2,2,2], 333, 80, 32);
+        let pkt_fin = build_fin([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 32);
         let _ = pkt_fin.decode();
 
         seq_stm.update(&pkt3);
@@ -336,11 +367,11 @@ mod tests {
     #[test]
     fn test_seqstream_case2() {
         let mut seq_stm = SeqStream::new();
-        let pkt1 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 2, false);
+        let pkt1 = build_tcp([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 2, false);
         let _ = pkt1.decode();
-        let pkt2 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 12, false);
+        let pkt2 = build_tcp([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 12, false);
         let _ = pkt2.decode();
-        let pkt3 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 22, false);
+        let pkt3 = build_tcp([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 22, false);
         let _ = pkt3.decode();
 
         seq_stm.update(&pkt3);
@@ -363,15 +394,15 @@ mod tests {
     #[test]
     fn test_seqstream_normal() {
         let mut seq_stm = SeqStream::new();
-        let pkt_syn = build_syn([1,1,1,1], [2,2,2,2], 333, 80, 1);
+        let pkt_syn = build_syn([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 1);
         let _ = pkt_syn.decode();
-        let pkt1 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 2, false);
+        let pkt1 = build_tcp([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 2, false);
         let _ = pkt1.decode();
-        let pkt2 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 12, false);
+        let pkt2 = build_tcp([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 12, false);
         let _ = pkt2.decode();
-        let pkt3 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 22, false);
+        let pkt3 = build_tcp([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 22, false);
         let _ = pkt3.decode();
-        let pkt_fin = build_fin([1,1,1,1], [2,2,2,2], 333, 80, 32);
+        let pkt_fin = build_fin([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 32);
         let _ = pkt_fin.decode();
 
         seq_stm.update(&pkt_syn);
@@ -405,17 +436,17 @@ mod tests {
     #[test]
     fn test_seqstream_case4() {
         let mut seq_stm = SeqStream::new();
-        let pkt_syn = build_syn([1,1,1,1], [2,2,2,2], 333, 80, 1);
+        let pkt_syn = build_syn([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 1);
         let _ = pkt_syn.decode();
-        let pkt1 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 2, false);
+        let pkt1 = build_tcp([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 2, false);
         let _ = pkt1.decode();
-        let pkt2 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 12, false);
+        let pkt2 = build_tcp([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 12, false);
         let _ = pkt2.decode();
-        let pkt3 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 22, false);
+        let pkt3 = build_tcp([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 22, false);
         let _ = pkt3.decode();
-        let pkt4 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 32, false);
+        let pkt4 = build_tcp([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 32, false);
         let _ = pkt4.decode();
-        let pkt_fin = build_fin([1,1,1,1], [2,2,2,2], 333, 80, 42);
+        let pkt_fin = build_fin([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 42);
         let _ = pkt_fin.decode();
 
         seq_stm.update(&pkt_syn);
@@ -443,17 +474,17 @@ mod tests {
     #[test]
     fn test_seqstream_case6() {
         let mut seq_stm = SeqStream::new();
-        let pkt_syn = build_syn([1,1,1,1], [2,2,2,2], 333, 80, 1);
+        let pkt_syn = build_syn([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 1);
         let _ = pkt_syn.decode();
-        let pkt1 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 2, false);
+        let pkt1 = build_tcp([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 2, false);
         let _ = pkt1.decode();
-        let pkt2 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 12, false);
+        let pkt2 = build_tcp([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 12, false);
         let _ = pkt2.decode();
-        let pkt3 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 22, false);
+        let pkt3 = build_tcp([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 22, false);
         let _ = pkt3.decode();
-        let pkt4 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 32, false);
+        let pkt4 = build_tcp([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 32, false);
         let _ = pkt4.decode();
-        let pkt_fin = build_fin([1,1,1,1], [2,2,2,2], 333, 80, 42);
+        let pkt_fin = build_fin([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 42);
         let _ = pkt_fin.decode();
 
         seq_stm.update(&pkt_syn);
@@ -483,17 +514,17 @@ mod tests {
     #[test]
     fn test_seqstream_case7() {
         let mut seq_stm = SeqStream::new();
-        let pkt_syn = build_syn([1,1,1,1], [2,2,2,2], 333, 80, 1);
+        let pkt_syn = build_syn([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 1);
         let _ = pkt_syn.decode();
-        let pkt1 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 2, false);
+        let pkt1 = build_tcp([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 2, false);
         let _ = pkt1.decode();
-        let pkt2 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 12, false);
+        let pkt2 = build_tcp([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 12, false);
         let _ = pkt2.decode();
-        let pkt3 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 22, false);
+        let pkt3 = build_tcp([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 22, false);
         let _ = pkt3.decode();
-        let pkt4 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 32, false);
+        let pkt4 = build_tcp([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 32, false);
         let _ = pkt4.decode();
-        let pkt_fin = build_fin([1,1,1,1], [2,2,2,2], 333, 80, 42);
+        let pkt_fin = build_fin([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 42);
         let _ = pkt_fin.decode();
 
         seq_stm.update(&pkt_syn);
@@ -524,17 +555,17 @@ mod tests {
     #[test]
     fn test_seqstream_case8() {
         let mut seq_stm = SeqStream::new();
-        let pkt_syn = build_syn([1,1,1,1], [2,2,2,2], 333, 80, 1);
+        let pkt_syn = build_syn([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 1);
         let _ = pkt_syn.decode();
-        let pkt1 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 2, false);
+        let pkt1 = build_tcp([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 2, false);
         let _ = pkt1.decode();
-        let pkt2 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 12, false);
+        let pkt2 = build_tcp([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 12, false);
         let _ = pkt2.decode();
-        let pkt3 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 22, false);
+        let pkt3 = build_tcp([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 22, false);
         let _ = pkt3.decode();
-        let pkt4 = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 32, false);
+        let pkt4 = build_tcp([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 32, false);
         let _ = pkt4.decode();
-        let pkt_fin = build_fin([1,1,1,1], [2,2,2,2], 333, 80, 42);
+        let pkt_fin = build_fin([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 42);
         let _ = pkt_fin.decode();
 
         seq_stm.update(&pkt_syn);
@@ -586,13 +617,13 @@ mod tests {
 
     #[test]
     fn test_node_update() {
-        let pkt_c2s = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 2, false);
+        let pkt_c2s = build_tcp([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 2, false);
         let _ = pkt_c2s.decode();
-        let pkt_c2s_fin = build_fin([1,1,1,1], [2,2,2,2], 333, 80, 12);
+        let pkt_c2s_fin = build_fin([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 12);
         let _ = pkt_c2s_fin.decode();
-        let pkt_s2c = build_tcp([2,2,2,2], [1,1,1,1], 80, 333, 2, false);
+        let pkt_s2c = build_tcp([2, 2, 2, 2], [1, 1, 1, 1], 80, 333, 2, false);
         let _ = pkt_s2c.decode();
-        let pkt_s2c_fin = build_fin([2,2,2,2], [1,1,1,1], 80, 333, 12);
+        let pkt_s2c_fin = build_fin([2, 2, 2, 2], [1, 1, 1, 1], 80, 333, 12);
         let _ = pkt_s2c_fin.decode();
         let mut node = FlowNode::new(pkt_c2s.hash_key(), 888);
 
@@ -630,13 +661,13 @@ mod tests {
 
     #[test]
     fn test_flow() {
-        let pkt_c2s = build_tcp([1,1,1,1], [2,2,2,2], 333, 80, 2, false);
+        let pkt_c2s = build_tcp([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 2, false);
         let _ = pkt_c2s.decode();
-        let pkt_c2s_fin = build_fin([1,1,1,1], [2,2,2,2], 333, 80, 12);
+        let pkt_c2s_fin = build_fin([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 12);
         let _ = pkt_c2s_fin.decode();
-        let pkt_s2c = build_tcp([2,2,2,2], [1,1,1,1], 80, 333, 2, false);
+        let pkt_s2c = build_tcp([2, 2, 2, 2], [1, 1, 1, 1], 80, 333, 2, false);
         let _ = pkt_s2c.decode();
-        let pkt_s2c_fin = build_fin([2,2,2,2], [1,1,1,1], 80, 333, 12);
+        let pkt_s2c_fin = build_fin([2, 2, 2, 2], [1, 1, 1, 1], 80, 333, 12);
         let _ = pkt_s2c_fin.decode();
         let mut flow = Flow::new();
 
@@ -668,32 +699,75 @@ mod tests {
         assert_eq!(0, flow.len());
     }
 
-    fn build_tcp(sip: [u8; 4], dip: [u8; 4], sport: u16, dport: u16, seq: u32, fin: bool) -> Packet {
-        let mut builder = PacketBuilder::
-        ethernet2([1,2,3,4,5,6],     //source mac
-                  [7,8,9,10,11,12]) //destionation mac
-            .ipv4(sip, //source ip
-                  dip, //desitionation ip
-                  20)            //time to life
-            .tcp(sport,    //source port
-                 dport,  //desitnation port
-                 seq,     //sequence number
-                 1024) //window size
+    #[test]
+    fn test_flow_timeout() {
+        let pkt1 = build_tcp([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 2, false);
+        let _ = pkt1.decode();
+        let pkt2 = build_tcp([1, 1, 1, 1], [2, 2, 2, 2], 333, 80, 12, false);
+        let _ = pkt2.decode();
+        let mut flow = Flow::new();
+        let mut now = 1000;
+
+        let node = flow.get_mut_or_new(&pkt1, now).unwrap();
+        node.update(&pkt1, now);
+        assert_eq!(now, node.start_time);
+        assert_eq!(now, node.last_time);
+
+        now += 100;
+        let node = flow.get_mut_or_new(&pkt2, now).unwrap();
+        node.update(&pkt2, now);
+        assert_eq!(now, node.last_time);
+
+        now += NODE_TIMEOUT;
+        flow.timeout(now, |node| {
+            test_call_node(node);
+        });
+        assert!(flow.is_empty());
+    }
+
+    fn test_call_node(node: &FlowNode) {
+        assert_eq!(node.start_time, 1000);
+    }
+
+    fn build_tcp(
+        sip: [u8; 4],
+        dip: [u8; 4],
+        sport: u16,
+        dport: u16,
+        seq: u32,
+        fin: bool,
+    ) -> Packet {
+        let mut builder = PacketBuilder::ethernet2(
+            [1, 2, 3, 4, 5, 6], //source mac
+            [7, 8, 9, 10, 11, 12],
+        ) //destionation mac
+        .ipv4(
+            sip, //source ip
+            dip, //desitionation ip
+            20,
+        ) //time to life
+        .tcp(
+            sport, //source port
+            dport, //desitnation port
+            seq,   //sequence number
+            1024,
+        ) //window size
         //set additional tcp header fields
-            .ns() //set the ns flag
+        .ns() //set the ns flag
         //supported flags: ns(), fin(), syn(), rst(), psh(), ece(), cwr()
-            .ack(123) //ack flag + the ack number
-            .urg(23) //urg flag + urgent pointer
-            .options(&[
-                TcpOptionElement::Noop,
-                TcpOptionElement::MaximumSegmentSize(1234)
-            ]).unwrap();
+        .ack(123) //ack flag + the ack number
+        .urg(23) //urg flag + urgent pointer
+        .options(&[
+            TcpOptionElement::Noop,
+            TcpOptionElement::MaximumSegmentSize(1234),
+        ])
+        .unwrap();
         if fin {
             builder = builder.fin();
         }
-        
+
         //payload of the tcp packet
-        let payload = [1,2,3,4,5,6,7,8,9,10];
+        let payload = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
         //get some memory to store the result
         let mut result = Vec::<u8>::with_capacity(builder.size(payload.len()));
         //serialize
@@ -708,26 +782,32 @@ mod tests {
 
     // sync包，不带载荷
     fn build_syn(sip: [u8; 4], dip: [u8; 4], sport: u16, dport: u16, seq: u32) -> Packet {
-        let builder = PacketBuilder::
-        ethernet2([1,2,3,4,5,6],     //source mac
-                  [7,8,9,10,11,12]) //destionation mac
-            .ipv4(sip, //source ip
-                  dip, //desitionation ip
-                  20)            //time to life
-            .tcp(sport,    //source port
-                 dport,  //desitnation port
-                 seq,     //sequence number
-                 1024) //window size
+        let builder = PacketBuilder::ethernet2(
+            [1, 2, 3, 4, 5, 6], //source mac
+            [7, 8, 9, 10, 11, 12],
+        ) //destionation mac
+        .ipv4(
+            sip, //source ip
+            dip, //desitionation ip
+            20,
+        ) //time to life
+        .tcp(
+            sport, //source port
+            dport, //desitnation port
+            seq,   //sequence number
+            1024,
+        ) //window size
         //set additional tcp header fields
-            .ns() //set the ns flag
+        .ns() //set the ns flag
         //supported flags: ns(), fin(), syn(), rst(), psh(), ece(), cwr()
-            .syn()
-            .ack(123) //ack flag + the ack number
-            .urg(23) //urg flag + urgent pointer
-            .options(&[
-                TcpOptionElement::Noop,
-                TcpOptionElement::MaximumSegmentSize(1234)
-            ]).unwrap();
+        .syn()
+        .ack(123) //ack flag + the ack number
+        .urg(23) //urg flag + urgent pointer
+        .options(&[
+            TcpOptionElement::Noop,
+            TcpOptionElement::MaximumSegmentSize(1234),
+        ])
+        .unwrap();
 
         //payload of the tcp packet
         let payload = [];
@@ -745,26 +825,32 @@ mod tests {
 
     // fin包，不带载荷
     fn build_fin(sip: [u8; 4], dip: [u8; 4], sport: u16, dport: u16, seq: u32) -> Packet {
-        let builder = PacketBuilder::
-        ethernet2([1,2,3,4,5,6],     //source mac
-                  [7,8,9,10,11,12]) //destionation mac
-            .ipv4(sip, //source ip
-                  dip, //desitionation ip
-                  20)            //time to life
-            .tcp(sport,    //source port
-                 dport,  //desitnation port
-                 seq,     //sequence number
-                 1024) //window size
+        let builder = PacketBuilder::ethernet2(
+            [1, 2, 3, 4, 5, 6], //source mac
+            [7, 8, 9, 10, 11, 12],
+        ) //destionation mac
+        .ipv4(
+            sip, //source ip
+            dip, //desitionation ip
+            20,
+        ) //time to life
+        .tcp(
+            sport, //source port
+            dport, //desitnation port
+            seq,   //sequence number
+            1024,
+        ) //window size
         //set additional tcp header fields
-            .ns() //set the ns flag
+        .ns() //set the ns flag
         //supported flags: ns(), fin(), syn(), rst(), psh(), ece(), cwr()
-            .fin()
-            .ack(123) //ack flag + the ack number
-            .urg(23) //urg flag + urgent pointer
-            .options(&[
-                TcpOptionElement::Noop,
-                TcpOptionElement::MaximumSegmentSize(1234)
-            ]).unwrap();
+        .fin()
+        .ack(123) //ack flag + the ack number
+        .urg(23) //urg flag + urgent pointer
+        .options(&[
+            TcpOptionElement::Noop,
+            TcpOptionElement::MaximumSegmentSize(1234),
+        ])
+        .unwrap();
 
         //payload of the tcp packet
         let payload = [];
