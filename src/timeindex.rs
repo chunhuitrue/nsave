@@ -63,6 +63,13 @@ impl TimeIndex {
     }
 }
 
+#[derive(Debug)]
+pub enum TimeIndexError {
+    CreatePath,
+    CreateFile,
+    TimeIndex,
+}
+
 // 如果文件不存在，就创建。如果已经存在，就open。
 fn current_index_file(timestamp: u128) -> Result<(File, u32), TimeIndexError> {
     let date = ts_date_local(timestamp);
@@ -100,13 +107,6 @@ fn ts_date_local(timestamp_nanos: u128) -> DateTime<Local> {
             .expect("Failed to convert to local time")
             .naive_utc(),
     )
-}
-
-#[derive(Debug)]
-pub enum TimeIndexError {
-    CreatePath,
-    CreateFile,
-    TimeIndex,
 }
 
 #[cfg(test)]
