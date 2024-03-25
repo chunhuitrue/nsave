@@ -1,19 +1,21 @@
-#![allow(dead_code)]
+// #![allow(dead_code)]
 
 use crate::packet::PacketKey;
+// use bincode::{deserialize, serialize};
 use chrono::{DateTime, Datelike, Local, TimeZone, Timelike};
+use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::fs::{self, File, OpenOptions};
 use std::path::PathBuf;
 
-const TIMER_INTERVEL: u128 = 1_000_000_000; // 1秒
 const DATA_PATH: &str = "/Users/lch/misc/nsava_data/";
-static mut PREV_TS: u128 = 0;
+const MINUTE_NANO: u128 = 1_000_000_000 * 60;
 
 #[derive(Debug)]
 pub struct TimeIndex {
     index_file: RefCell<Option<File>>,
     current_minute: RefCell<u32>,
+    prev_ts: RefCell<u128>,
 }
 
 impl TimeIndex {
@@ -21,6 +23,7 @@ impl TimeIndex {
         TimeIndex {
             index_file: RefCell::new(None),
             current_minute: RefCell::new(0),
+            prev_ts: RefCell::new(0),
         }
     }
 
@@ -34,33 +37,30 @@ impl TimeIndex {
             }
         }
 
-        // todo
         dbg!("TimeIndex. save_index");
 
         Ok(())
     }
 
     pub fn timer(&self, now: u128) {
-        unsafe {
-            if PREV_TS == 0 {
-                PREV_TS = now;
-                return;
-            }
-
-            if now > PREV_TS + TIMER_INTERVEL {
-                PREV_TS = now;
-
-                dbg!("TimeIndex. 切换目录");
-                if let Ok((file, cur_minute)) = current_index_file(now) {
-                    // todo 刷新写入文件
-                    if *self.current_minute.borrow() != cur_minute {
-                        *self.index_file.borrow_mut() = Some(file);
-                        *self.current_minute.borrow_mut() = cur_minute;
-                    }
+        if now > *self.prev_ts.borrow() + MINUTE_NANO {
+            dbg!("TimeIndex. 切换目录");
+            *self.prev_ts.borrow_mut() = now;
+            if let Ok((file, cur_minute)) = current_index_file(now) {
+                if *self.current_minute.borrow() != cur_minute {
+                    *self.index_file.borrow_mut() = Some(file);
+                    *self.current_minute.borrow_mut() = cur_minute;
                 }
             }
         }
     }
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Hash, Clone, Copy)]
+struct LinkRecord {
+    start_time: u128,
+    end_tiem: u128,
+    tuple5: PacketKey,
 }
 
 #[derive(Debug)]
@@ -112,6 +112,9 @@ fn ts_date_local(timestamp_nanos: u128) -> DateTime<Local> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Packet;
+    use bincode::{deserialize, serialize};
+    use etherparse::*;
 
     #[test]
     fn test_ts_data_local() {
@@ -131,5 +134,62 @@ mod tests {
         let timestamp = 1711256627183244000; // 2024/03/24 13:03:47
         let result = current_index_file(timestamp);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_serialize_linkrecord() {
+        let pkt = build_tcp([1, 1, 1, 1], [2, 2, 2, 2], 1, 2);
+        let _ = pkt.decode();
+        let record = LinkRecord {
+            start_time: 100,
+            end_tiem: 200,
+            tuple5: pkt.hash_key(),
+        };
+
+        let encode: Vec<u8> = serialize(&record).unwrap();
+        let decode: LinkRecord = deserialize(&encode[..]).unwrap();
+        assert_eq!(record, decode);
+    }
+
+    fn build_tcp(sip: [u8; 4], dip: [u8; 4], sport: u16, dport: u16) -> Packet {
+        let builder = PacketBuilder::ethernet2(
+            [1, 2, 3, 4, 5, 6], //source mac
+            [7, 8, 9, 10, 11, 12],
+        ) //destionation mac
+        .ipv4(
+            sip, //source ip
+            dip, //desitionation ip
+            20,
+        ) //time to life
+        .tcp(
+            sport, //source port
+            dport, //desitnation port
+            1234,  //sequence number
+            1024,
+        ) //window size
+        //set additional tcp header fields
+        .ns() //set the ns flag
+        //supported flags: ns(), fin(), syn(), rst(), psh(), ece(), cwr()
+        .fin()
+        .ack(123) //ack flag + the ack number
+        .urg(23) //urg flag + urgent pointer
+        .options(&[
+            TcpOptionElement::Noop,
+            TcpOptionElement::MaximumSegmentSize(1234),
+        ])
+        .unwrap();
+
+        //payload of the tcp packet
+        let payload = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+        //get some memory to store the result
+        let mut result = Vec::<u8>::with_capacity(builder.size(payload.len()));
+        //serialize
+        //this will automatically set all length fields, checksums and identifiers (ethertype & protocol)
+        builder.write(&mut result, &payload).unwrap();
+        // println!("result len:{}", result.len());
+
+        let pkt = Packet::new(result, 1);
+        let _ = pkt.decode();
+        pkt
     }
 }
