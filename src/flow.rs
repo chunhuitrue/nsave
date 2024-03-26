@@ -303,6 +303,12 @@ impl Flow {
     }
 }
 
+impl Default for Flow {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

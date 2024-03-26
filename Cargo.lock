@@ -366,6 +366,7 @@ dependencies = [
 [[package]]
 name = "tmohash"
 version = "0.1.0"
+source = "git+https://gitee.com/chunhui_true/tmo_hash.git?branch=master#2180b098e339aba52e98a26e615293feb9ac0652"
 dependencies = [
  "hashbrown",
 ]

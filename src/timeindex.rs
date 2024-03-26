@@ -155,7 +155,7 @@ fn ts_date_local(timestamp_nanos: u128) -> DateTime<Local> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Packet;
+    use crate::packet::Packet;
     use bincode::{deserialize, serialize};
     use etherparse::*;
 
