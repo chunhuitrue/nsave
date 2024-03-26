@@ -74,6 +74,8 @@ fn main() {
                 break;
             }
         }
+
+        thread::sleep(Duration::from_millis(20)); // 调试用
     }
 
     running.store(false, Ordering::Relaxed);
