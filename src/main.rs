@@ -92,7 +92,7 @@ fn main() {
 
 fn writer_thread(running: Arc<AtomicBool>, writer_id: u64, rx: Receiver<Arc<Packet>>) {
     let mut flow = Flow::new();
-    let time_index = TimeIndex::new();
+    let time_index = TimeIndex::new(writer_id);
     let mut now;
     let mut prev_ts = timenow();
     let mut recv_num: u64 = 0;
@@ -109,10 +109,15 @@ fn writer_thread(running: Arc<AtomicBool>, writer_id: u64, rx: Receiver<Arc<Pack
                     node.update(&pkt, now);
 
                     if node.is_fin() {
-                        time_index
-                            .save_index(&node.key, now)
-                            .expect("Failed to save index");
+                        println!("thread {}. node is fin", writer_id);
                         remove_key = Some(node.key);
+
+                        if time_index
+                            .save_index(&node.key, node.start_time, now)
+                            .is_err()
+                        {
+                            println!("Failed to save index. node key{:?}", &node.key);
+                        }
                     }
                 } else {
                     flow_err += 1;
@@ -134,10 +139,14 @@ fn writer_thread(running: Arc<AtomicBool>, writer_id: u64, rx: Receiver<Arc<Pack
 
         if now > prev_ts + TIMER_INTERVEL {
             prev_ts = now;
+
             flow.timeout(now, |node| {
-                time_index
-                    .save_index(&node.key, now)
-                    .expect("time index error.")
+                if time_index
+                    .save_index(&node.key, node.start_time, now)
+                    .is_err()
+                {
+                    println!("Failed to save index. node key{:?}", &node.key);
+                }
             });
             time_index.timer(now);
         }

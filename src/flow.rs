@@ -6,7 +6,7 @@ use std::net::IpAddr;
 use tmohash::TmoHash;
 
 const MAX_TABLE_CAPACITY: usize = 1024;
-const NODE_TIMEOUT: u128 = 10_000_000_000; // 30秒
+const NODE_TIMEOUT: u128 = 10_000_000_000; // 10
 const MAX_SEQ_GAP: usize = 8;
 
 #[derive(Debug)]
