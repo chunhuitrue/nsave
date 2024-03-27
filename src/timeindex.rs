@@ -8,25 +8,24 @@ use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 
 const DATA_PATH: &str = "/Users/lch/misc/nsava_data/";
-const MINUTE_NANO: u128 = 1_000_000_000 * 60;
 const BUFF_SIZE: usize = 8 * 1024;
 const FLASH_TIMEOUT: u128 = 1_000_000_000 * 10;
 
 #[derive(Debug)]
 pub struct TimeIndex {
-    buff_writer: RefCell<Option<BufWriter<File>>>,
-    prev_ts: RefCell<u128>,       // 上次新建文件的时间戳
-    last_write_ts: RefCell<u128>, // 上次写文件的时间戳
     dir_id: u64,
+    buff_writer: RefCell<Option<BufWriter<File>>>,
+    last_write_ts: RefCell<u128>, // 上次写文件的时间戳
+    current_minute: RefCell<u32>, // 当前分钟数值
 }
 
 impl TimeIndex {
     pub fn new(dir_id: u64) -> Self {
         TimeIndex {
             buff_writer: RefCell::new(None),
-            prev_ts: RefCell::new(0),
             last_write_ts: RefCell::new(0),
             dir_id,
+            current_minute: RefCell::new(0),
         }
     }
 
@@ -38,13 +37,6 @@ impl TimeIndex {
     ) -> Result<(), TimeIndexError> {
         // 如果没有文件，就新建一个
         if self.buff_writer.borrow().is_none() {
-            self.new_file(now)?;
-        }
-
-        // 如果当前时间已经不是文件所在分钟，就关闭旧文件，新建新的分钟文件
-        if now > *self.prev_ts.borrow() + MINUTE_NANO {
-            println!("TimeIndex. 刷新当前文件, 切换新文件");
-            let _ = self.flush(now);
             self.new_file(now)?;
         }
 
@@ -71,8 +63,19 @@ impl TimeIndex {
     }
 
     pub fn timer(&self, now: u128) {
+        println!("in timer {}", self.dir_id);
+        // 如果文件长时间没有写入，刷新
         if now > *self.last_write_ts.borrow() + FLASH_TIMEOUT {
             let _ = self.flush(now);
+            *self.last_write_ts.borrow_mut() = now;
+        }
+
+        // 如果当前分钟数已过，关闭现有文件
+        let minute = ts_date_local(now).minute();
+        if minute != *self.current_minute.borrow() {
+            println!("in timer {}. next minute", self.dir_id);
+            *self.current_minute.borrow_mut() = minute;
+            let _ = self.close_file(now);
         }
     }
 
@@ -87,19 +90,26 @@ impl TimeIndex {
 
     // 刷新现有文件，关闭现有文件，新建新文件
     fn new_file(&self, now: u128) -> Result<(), TimeIndexError> {
-        if let Ok(file) = current_index_file(self.dir_id, now) {
+        let _ = self.close_file(now);
+        if let Ok((file, minute)) = current_index_file(self.dir_id, now) {
             *self.buff_writer.borrow_mut() = Some(BufWriter::with_capacity(BUFF_SIZE, file));
-            *self.prev_ts.borrow_mut() = now;
             *self.last_write_ts.borrow_mut() = now;
+            *self.current_minute.borrow_mut() = minute;
             Ok(())
         } else {
             Err(TimeIndexError::CreateFile)
         }
     }
+
+    fn close_file(&self, now: u128) -> io::Result<()> {
+        let ret = self.flush(now);
+        *self.buff_writer.borrow_mut() = None;
+        ret
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Hash, Clone, Copy)]
-struct LinkRecord {
+pub struct LinkRecord {
     start_time: u128,
     end_tiem: u128,
     tuple5: PacketKey,
@@ -113,7 +123,7 @@ pub enum TimeIndexError {
 }
 
 // 如果文件不存在，就创建。如果已经存在，就open。
-fn current_index_file(dir_id: u64, timestamp: u128) -> Result<File, TimeIndexError> {
+fn current_index_file(dir_id: u64, timestamp: u128) -> Result<(File, u32), TimeIndexError> {
     let date = ts_date_local(timestamp);
     let mut path = PathBuf::new();
     path.push(DATA_PATH);
@@ -135,7 +145,7 @@ fn current_index_file(dir_id: u64, timestamp: u128) -> Result<File, TimeIndexErr
         .truncate(false)
         .open(&path);
     match result {
-        Ok(file) => Ok(file),
+        Ok(file) => Ok((file, date.minute())),
         Err(_) => Err(TimeIndexError::CreateFile),
     }
 }
