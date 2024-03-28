@@ -14,14 +14,31 @@ fn main() {
         std::process::exit(1);
     }
 
-    dump_ti((&args[0]).into());
+    dump_ti((&args[1]).into());
 }
 
 fn dump_ti(path: PathBuf) {
-    let result = File::open(path);
+    let result = File::open(path.clone());
     match result {
         Ok(file) => {
-            let mut reader = BufReader::new(file);
+            let mut reader = BufReader::new(&file);
+            println!("xxxxxxx read buffer len: {}", reader.buffer().len());
+            for byte in reader.buffer() {
+                print!("{:02x} ", byte); // 在每个字节后添加一个空格
+            }
+            println!(); // 打印换行符
+            println!("xxxxxxx2");
+
+            let metadata = file.metadata();
+            match metadata {
+                Ok(meta) => {
+                    println!("path: {:?}, File size: {}", path, meta.len());
+                }
+                Err(e) => {
+                    println!("Error getting file metadata: {}", e);
+                }
+            }
+
             loop {
                 match deserialize_from::<_, LinkRecord>(&mut reader) {
                     Ok(record) => {

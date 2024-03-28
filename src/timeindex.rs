@@ -1,13 +1,15 @@
 use crate::packet::PacketKey;
+use bincode::{deserialize, serialize};
 use chrono::{DateTime, Datelike, Local, TimeZone, Timelike};
 use serde::{Deserialize, Serialize};
+use std::borrow::BorrowMut;
 use std::cell::RefCell;
 use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 
-const DATA_PATH: &str = "/Users/lch/misc/nsava_data/";
+const DATA_PATH: &str = "/Users/lch/misc/nsave_data/";
 const BUFF_SIZE: usize = 8 * 1024;
 const FLASH_TIMEOUT: u128 = 1_000_000_000 * 10;
 
@@ -53,6 +55,19 @@ impl TimeIndex {
                 println!("timeindex write to file error");
                 return Err(TimeIndexError::TimeIndex);
             }
+            let encode: Vec<u8> = serialize(&record).unwrap();
+            for byte in &encode {
+                print!("{:02x} ", byte); // 在每个字节后添加一个空格
+            }
+            println!(); // 打印换行符
+
+            println!(
+                "len: {}， buff: {:?}, \nencode len: {}，encode: {:?}",
+                buff_writer.as_mut().unwrap().buffer().len(),
+                buff_writer.as_mut().unwrap().buffer(),
+                encode.len(),
+                encode
+            );
         } else {
             println!("timeindex. no writer");
             return Err(TimeIndexError::TimeIndex);
@@ -200,6 +215,7 @@ mod tests {
         };
 
         let encode: Vec<u8> = serialize(&record).unwrap();
+        println!("len: {}, vec: {:?}", encode.len(), encode);
         let decode: LinkRecord = deserialize(&encode[..]).unwrap();
         assert_eq!(record, decode);
     }
