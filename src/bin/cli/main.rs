@@ -1,44 +1,45 @@
 // #![allow(dead_code)]
 
-use bincode::{deserialize_from, ErrorKind};
+use bincode::deserialize_from;
+use clap::{arg, Command};
 use libnsave::timeindex::*;
-use std::fs::{self, File, OpenOptions};
-use std::io::{BufReader, Read};
+use std::fs::File;
+use std::io::BufReader;
 use std::path::PathBuf;
-use std::{env, result};
 
 fn main() {
-    let args: Vec<String> = env::args().collect();
-    if args.len() != 2 {
-        eprintln!("Usage: {} <timeindex_file>", args[0]);
-        std::process::exit(1);
+    let matches = cli().get_matches();
+    match matches.subcommand() {
+        Some(("dump", sub_matches)) => {
+            let file = sub_matches.get_one::<String>("FILENAME").expect("required");
+            dump_ti(file.into());
+        }
+        _ => {
+            println!("unknown command.")
+        }
     }
+}
 
-    dump_ti((&args[1]).into());
+fn cli() -> Command {
+    Command::new("nsave-cli")
+        .about("nsave cli")
+        .subcommand_required(true)
+        .arg_required_else_help(true)
+        .allow_external_subcommands(true)
+        .subcommand(
+            Command::new("dump")
+                .about("dump a file. .ti .ci .ne")
+                .arg(arg!(<FILENAME> "the file name. .ti .ci .ne"))
+                .arg_required_else_help(true),
+        )
 }
 
 fn dump_ti(path: PathBuf) {
+    println!("dump {:?}:", path);
     let result = File::open(path.clone());
     match result {
         Ok(file) => {
             let mut reader = BufReader::new(&file);
-            println!("xxxxxxx read buffer len: {}", reader.buffer().len());
-            for byte in reader.buffer() {
-                print!("{:02x} ", byte); // 在每个字节后添加一个空格
-            }
-            println!(); // 打印换行符
-            println!("xxxxxxx2");
-
-            let metadata = file.metadata();
-            match metadata {
-                Ok(meta) => {
-                    println!("path: {:?}, File size: {}", path, meta.len());
-                }
-                Err(e) => {
-                    println!("Error getting file metadata: {}", e);
-                }
-            }
-
             loop {
                 match deserialize_from::<_, LinkRecord>(&mut reader) {
                     Ok(record) => {

@@ -1,8 +1,6 @@
 use crate::packet::PacketKey;
-use bincode::{deserialize, serialize};
 use chrono::{DateTime, Datelike, Local, TimeZone, Timelike};
 use serde::{Deserialize, Serialize};
-use std::borrow::BorrowMut;
 use std::cell::RefCell;
 use std::fs::{self, File, OpenOptions};
 use std::io;
@@ -55,19 +53,6 @@ impl TimeIndex {
                 println!("timeindex write to file error");
                 return Err(TimeIndexError::TimeIndex);
             }
-            let encode: Vec<u8> = serialize(&record).unwrap();
-            for byte in &encode {
-                print!("{:02x} ", byte); // 在每个字节后添加一个空格
-            }
-            println!(); // 打印换行符
-
-            println!(
-                "len: {}， buff: {:?}, \nencode len: {}，encode: {:?}",
-                buff_writer.as_mut().unwrap().buffer().len(),
-                buff_writer.as_mut().unwrap().buffer(),
-                encode.len(),
-                encode
-            );
         } else {
             println!("timeindex. no writer");
             return Err(TimeIndexError::TimeIndex);
