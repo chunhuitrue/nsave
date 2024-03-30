@@ -1,13 +1,16 @@
 mod capture;
+mod common;
 mod flow;
 mod packet;
 mod timeindex;
 
+use crate::common::*;
 use crate::packet::Packet;
 use crate::timeindex::*;
 use capture::*;
+use clap::{arg, value_parser, Command};
 use flow::*;
-use std::env;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver;
 use std::sync::mpsc::TryRecvError;
@@ -16,16 +19,31 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const THREAD_NUM: u64 = 2;
 const CHANNEL_BUFF: usize = 2048;
 const TIMER_INTERVEL: u128 = 1_000_000_000; // 1秒
 const EMPTY_SLEEP: u64 = 5;
 
 fn main() {
-    let args: Vec<String> = env::args().collect();
-    if args.len() != 2 {
-        eprintln!("Usage: {} <pcap_file>", args[0]);
-        std::process::exit(1);
+    let pcap_file;
+
+    let matches = cli().get_matches();
+    if let Some(pcap) = matches.get_one::<PathBuf>("pcap") {
+        println!("pcap file: {}", pcap.display());
+        pcap_file = pcap;
+    } else {
+        return;
+    }
+    if let Some(config_path) = matches.get_one::<PathBuf>("config") {
+        println!("config file: {}", config_path.display());
+    }
+    match matches
+        .get_one::<u8>("debug")
+        .expect("Count's are defaulted")
+    {
+        0 => {}
+        1 => println!("Debug mode is kind of on"),
+        2 => println!("Debug mode is on"),
+        _ => println!("Don't be crazy"),
     }
 
     let running = Arc::new(AtomicBool::new(true));
@@ -50,7 +68,8 @@ fn main() {
         txs.push(tx);
     }
 
-    let mut capture = Capture::init(&args[1]).unwrap();
+    let mut capture = Capture::init(pcap_file).unwrap();
+    // let mut capture = Capture::init(&args[1]).unwrap();
     while running.load(Ordering::Relaxed) {
         let now = timenow();
         let pkt = capture.next_packet(now);
@@ -90,6 +109,24 @@ fn main() {
         );
     }
     std::process::exit(0);
+}
+
+fn cli() -> Command {
+    Command::new("nsave")
+        .about("nsave server")
+        .arg_required_else_help(true)
+        .allow_external_subcommands(true)
+        .arg(
+            arg!(-c --config <FILE> "Sets a custom config file")
+                .required(false)
+                .value_parser(value_parser!(PathBuf)),
+        )
+        .arg(arg!(-d --debug ... "Turn debugging information on").required(false))
+        .arg(
+            arg!(-p --pcap <PCAPFILE> "load pcapfile")
+                .required(true)
+                .value_parser(value_parser!(PathBuf)),
+        )
 }
 
 fn writer_thread(running: Arc<AtomicBool>, writer_id: u64, rx: Receiver<Arc<Packet>>) {

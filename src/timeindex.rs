@@ -1,10 +1,16 @@
-use crate::packet::PacketKey;
-use chrono::{DateTime, Datelike, Local, TimeZone, Timelike};
+#![allow(dead_code)]
+
+use crate::common::*;
+use crate::packet::*;
+use bincode::deserialize_from;
+use chrono::{DateTime, Datelike, Duration, Local, NaiveDateTime, TimeZone, Timelike};
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::fs::{self, File, OpenOptions};
 use std::io;
+use std::io::BufReader;
 use std::io::{BufWriter, Write};
+use std::net::IpAddr;
 use std::path::PathBuf;
 
 const DATA_PATH: &str = "/Users/lch/misc/nsave_data/";
@@ -110,9 +116,9 @@ impl TimeIndex {
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Hash, Clone, Copy)]
 pub struct LinkRecord {
-    start_time: u128,
-    end_tiem: u128,
-    tuple5: PacketKey,
+    pub start_time: u128,
+    pub end_tiem: u128,
+    pub tuple5: PacketKey,
 }
 
 #[derive(Debug)]
@@ -120,6 +126,194 @@ pub enum TimeIndexError {
     CreatePath,
     CreateFile,
     TimeIndex,
+}
+
+pub fn dump_ti_file(path: PathBuf) {
+    println!("dump {:?}:", path);
+    let result = File::open(path.clone());
+    match result {
+        Ok(file) => {
+            let mut reader = BufReader::new(&file);
+            loop {
+                match deserialize_from::<_, LinkRecord>(&mut reader) {
+                    Ok(record) => {
+                        // 处理反序列化的值
+                        println!("get a record: {:?}", record);
+                    }
+                    // 如果遇到EOF，则退出循环
+                    Err(err) => {
+                        if let bincode::ErrorKind::Io(ref io_err) = *err {
+                            if io_err.kind() == std::io::ErrorKind::UnexpectedEof {
+                                println!("dump ok");
+                                break;
+                            }
+                        }
+                        // 处理其他类型的错误
+                        println!("read error: {}", err);
+                        return;
+                    }
+                }
+            }
+        }
+        Err(err) => {
+            println!("open file error: {}", err);
+        }
+    };
+}
+
+pub fn search_ti_file(
+    stime: Option<NaiveDateTime>,
+    etime: Option<NaiveDateTime>,
+    sip: Option<IpAddr>,
+    dip: Option<IpAddr>,
+    protocol: Option<TransProto>,
+    sport: Option<u16>,
+    dport: Option<u16>,
+) -> Vec<LinkRecord> {
+    println!("start time: {:?}, end time: {:?}", stime, etime);
+    println!(
+        "sip: {:?}, sport: {:?} -- dip: {:?}, dport: {:?}, protocol: {:?}",
+        sip, sport, dip, dport, protocol
+    );
+
+    let mut record: Vec<LinkRecord> = Vec::new();
+    let mut current_time = stime.unwrap();
+    while current_time < etime.unwrap() {
+        for dir in 0..THREAD_NUM {
+            if let Ok((file_ti, file_ti_path)) = time2file_ti(current_time, dir) {
+                println!("find a time index file: {:?}", file_ti_path);
+                let mut file_record =
+                    search_ti(file_ti, stime, etime, sip, dip, protocol, sport, dport);
+                record.append(&mut file_record);
+            } else {
+                continue;
+            }
+        }
+
+        current_time += Duration::try_minutes(1).unwrap();
+    }
+    record
+}
+
+#[allow(clippy::too_many_arguments)]
+fn search_ti(
+    file_ti: File,
+    stime: Option<NaiveDateTime>,
+    etime: Option<NaiveDateTime>,
+    sip: Option<IpAddr>,
+    dip: Option<IpAddr>,
+    protocol: Option<TransProto>,
+    sport: Option<u16>,
+    dport: Option<u16>,
+) -> Vec<LinkRecord> {
+    let mut record: Vec<LinkRecord> = Vec::new();
+    let mut reader = BufReader::new(&file_ti);
+    while let Ok(ti) = deserialize_from::<_, LinkRecord>(&mut reader) {
+        if match_ti(
+            to_timestamp(stime),
+            to_timestamp(etime),
+            sip,
+            dip,
+            protocol,
+            sport,
+            dport,
+            &ti,
+        ) {
+            record.push(ti);
+        }
+    }
+    record
+}
+
+fn to_timestamp(time: Option<NaiveDateTime>) -> Option<u128> {
+    time?;
+    time.unwrap()
+        .and_utc()
+        .timestamp_nanos_opt()
+        .map(|ts| ts as u128)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn match_ti(
+    stime: Option<u128>,
+    etime: Option<u128>,
+    sip: Option<IpAddr>,
+    dip: Option<IpAddr>,
+    protocol: Option<TransProto>,
+    sport: Option<u16>,
+    dport: Option<u16>,
+    record: &LinkRecord,
+) -> bool {
+    let match0 = match_stime(record.start_time, stime)
+        && match_etime(record.end_tiem, etime)
+        && match_protocol(record.tuple5.trans_proto, protocol);
+    let match1 = match_ip(record.tuple5.addr1, sip)
+        && match_port(record.tuple5.port1, sport)
+        && match_ip(record.tuple5.addr2, dip)
+        && match_port(record.tuple5.port2, dport);
+    let match2 = match_ip(record.tuple5.addr1, dip)
+        && match_port(record.tuple5.port1, dport)
+        && match_ip(record.tuple5.addr2, sip)
+        && match_port(record.tuple5.port2, sport);
+
+    match0 && (match1 || match2)
+}
+
+fn match_stime(rd_start: u128, op_start: Option<u128>) -> bool {
+    if let Some(ts) = op_start {
+        ts <= rd_start
+    } else {
+        true
+    }
+}
+
+fn match_etime(rd_end: u128, op_end: Option<u128>) -> bool {
+    if let Some(ts) = op_end {
+        ts >= rd_end
+    } else {
+        true
+    }
+}
+
+fn match_ip(rd_ip: IpAddr, op_ip: Option<IpAddr>) -> bool {
+    if let Some(ip) = op_ip {
+        ip == rd_ip
+    } else {
+        true
+    }
+}
+
+fn match_protocol(rd_proto: TransProto, op_proto: Option<TransProto>) -> bool {
+    if let Some(proto) = op_proto {
+        proto == rd_proto
+    } else {
+        true
+    }
+}
+
+fn match_port(rd_port: u16, op_port: Option<u16>) -> bool {
+    if let Some(port) = op_port {
+        port == rd_port
+    } else {
+        true
+    }
+}
+
+pub fn time2file_ti(time: NaiveDateTime, dir: u64) -> Result<(File, PathBuf), TimeIndexError> {
+    let mut path = PathBuf::new();
+    path.push(DATA_PATH);
+    path.push(format!("{:03}", dir));
+    path.push(format!("{:04}", time.year()));
+    path.push(format!("{:02}", time.month()));
+    path.push(format!("{:02}", time.day()));
+    path.push(format!("{:02}", time.hour()));
+    path.push(format!("{:02}", time.minute()));
+    path.push(format!("{:02}.ti", time.minute()));
+
+    match File::open(path.clone()) {
+        Ok(file) => Ok((file, path)),
+        Err(_) => Err(TimeIndexError::TimeIndex),
+    }
 }
 
 // 如果文件不存在，就创建。如果已经存在，就open。
