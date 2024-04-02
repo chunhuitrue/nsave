@@ -69,7 +69,6 @@ fn main() {
     }
 
     let mut capture = Capture::init(pcap_file).unwrap();
-    // let mut capture = Capture::init(&args[1]).unwrap();
     while running.load(Ordering::Relaxed) {
         let now = timenow();
         let pkt = capture.next_packet(now);
@@ -94,7 +93,7 @@ fn main() {
             }
         }
 
-        thread::sleep(Duration::from_millis(20)); // 调试用
+        thread::sleep(Duration::from_millis(20)); // todo: del.调试用
     }
 
     running.store(false, Ordering::Relaxed);
