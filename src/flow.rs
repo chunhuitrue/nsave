@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use crate::packet::{Packet, PacketKey, TransProto};
+use crate::pktstore::*;
 use etherparse::IpHeader;
 use std::net::IpAddr;
 use tmohash::TmoHash;
@@ -16,6 +17,8 @@ pub struct FlowNode {
     pub last_time: u128,
     seq_strm1: SeqStream,
     seq_strm2: SeqStream,
+
+    pub store_ctx: Option<StoreCtx>,
 }
 
 impl FlowNode {
@@ -26,6 +29,7 @@ impl FlowNode {
             last_time: now,
             seq_strm1: SeqStream::new(),
             seq_strm2: SeqStream::new(),
+            store_ctx: None,
         }
     }
 

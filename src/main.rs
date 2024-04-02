@@ -1,15 +1,10 @@
-mod capture;
-mod common;
-mod flow;
-mod packet;
-mod timeindex;
-
-use crate::common::*;
-use crate::packet::Packet;
-use crate::timeindex::*;
 use capture::*;
 use clap::{arg, value_parser, Command};
+use common::*;
 use flow::*;
+use libnsave::*;
+use packet::Packet;
+use pktstore::*;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver;
@@ -18,6 +13,7 @@ use std::sync::mpsc::{self, TrySendError};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+// use timeindex::*;
 
 const CHANNEL_BUFF: usize = 2048;
 const TIMER_INTERVEL: u128 = 1_000_000_000; // 1秒
@@ -93,7 +89,7 @@ fn main() {
             }
         }
 
-        thread::sleep(Duration::from_millis(20)); // todo: del.调试用
+        // thread::sleep(Duration::from_millis(20)); // todo: del.调试用
     }
 
     running.store(false, Ordering::Relaxed);
@@ -130,11 +126,20 @@ fn cli() -> Command {
 
 fn writer_thread(running: Arc<AtomicBool>, writer_id: u64, rx: Receiver<Arc<Packet>>) {
     let mut flow = Flow::new();
-    let time_index = TimeIndex::new(writer_id);
+    // let time_index = TimeIndex::new(writer_id);
     let mut now;
     let mut prev_ts = timenow();
     let mut recv_num: u64 = 0;
     let mut flow_err: u64 = 0;
+
+    let mut data_path = PathBuf::new();
+    data_path.push(STORE_PATH);
+    data_path.push(format!("{:03}", writer_id));
+    let store = PktStore::new(data_path);
+    if store.init().is_err() {
+        println!("packet store init error.");
+        return;
+    }
 
     println!("writer: {:?} running...", writer_id);
     while running.load(Ordering::Relaxed) {
@@ -146,16 +151,22 @@ fn writer_thread(running: Arc<AtomicBool>, writer_id: u64, rx: Receiver<Arc<Pack
                 if let Some(node) = flow.get_mut_or_new(&pkt, now) {
                     node.update(&pkt, now);
 
+                    if node.store_ctx.is_none() {
+                        node.store_ctx = Some(StoreCtx::new());
+                    }
+                    store.store_pkt(node.store_ctx.as_ref().unwrap(), pkt, now);
+
                     if node.is_fin() {
                         println!("thread {}. node is fin", writer_id);
                         remove_key = Some(node.key);
 
-                        if time_index
-                            .save_index(&node.key, node.start_time, now)
-                            .is_err()
-                        {
-                            println!("Failed to save index. node key{:?}", &node.key);
-                        }
+                        store.link_fin(now);
+                        // if time_index
+                        //     .save_index(&node.key, node.start_time, now)
+                        //     .is_err()
+                        // {
+                        //     println!("Failed to save index. node key{:?}", &node.key);
+                        // }
                     }
                 } else {
                     flow_err += 1;
@@ -178,15 +189,17 @@ fn writer_thread(running: Arc<AtomicBool>, writer_id: u64, rx: Receiver<Arc<Pack
         if now > prev_ts + TIMER_INTERVEL {
             prev_ts = now;
 
-            flow.timeout(now, |node| {
-                if time_index
-                    .save_index(&node.key, node.start_time, now)
-                    .is_err()
-                {
-                    println!("Failed to save index. node key{:?}", &node.key);
-                }
-            });
-            time_index.timer(now);
+            store.timer(now);
+            flow.timeout(now, |_node| {});
+            // flow.timeout(now, |node| {
+            //     if time_index
+            //         .save_index(&node.key, node.start_time, now)
+            //         .is_err()
+            //     {
+            //         println!("Failed to save index. node key{:?}", &node.key);
+            //     }
+            // });
+            // time_index.timer(now);
         }
     }
     println!(
