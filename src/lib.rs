@@ -1,6 +1,7 @@
 pub mod capture;
 pub mod common;
+pub mod data;
 pub mod flow;
 pub mod packet;
-pub mod pktstore;
+pub mod store;
 pub mod timeindex;

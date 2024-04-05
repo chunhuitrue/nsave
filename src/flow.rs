@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use crate::packet::{Packet, PacketKey, TransProto};
-use crate::pktstore::*;
+use crate::store::*;
 use etherparse::IpHeader;
 use std::net::IpAddr;
 use tmohash::TmoHash;

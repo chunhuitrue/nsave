@@ -4,7 +4,6 @@ use common::*;
 use flow::*;
 use libnsave::*;
 use packet::Packet;
-use pktstore::*;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver;
@@ -13,10 +12,11 @@ use std::sync::mpsc::{self, TrySendError};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use store::*;
 // use timeindex::*;
 
 const CHANNEL_BUFF: usize = 2048;
-const TIMER_INTERVEL: u128 = 1_000_000_000; // 1秒
+const TIMER_INTERVEL: u128 = 100_000_000; // 100毫秒
 const EMPTY_SLEEP: u64 = 5;
 
 fn main() {
@@ -135,7 +135,7 @@ fn writer_thread(running: Arc<AtomicBool>, writer_id: u64, rx: Receiver<Arc<Pack
     let mut data_path = PathBuf::new();
     data_path.push(STORE_PATH);
     data_path.push(format!("{:03}", writer_id));
-    let store = PktStore::new(data_path);
+    let store = Store::new(data_path);
     if store.init().is_err() {
         println!("packet store init error.");
         return;
@@ -154,13 +154,13 @@ fn writer_thread(running: Arc<AtomicBool>, writer_id: u64, rx: Receiver<Arc<Pack
                     if node.store_ctx.is_none() {
                         node.store_ctx = Some(StoreCtx::new());
                     }
-                    store.store_pkt(node.store_ctx.as_ref().unwrap(), pkt, now);
+                    store.store(node.store_ctx.as_ref().unwrap(), pkt, now);
 
                     if node.is_fin() {
                         println!("thread {}. node is fin", writer_id);
                         remove_key = Some(node.key);
 
-                        store.link_fin(now);
+                        store.link_fin(&node.key, now);
                         // if time_index
                         //     .save_index(&node.key, node.start_time, now)
                         //     .is_err()
