@@ -16,6 +16,7 @@ use store::*;
 // use timeindex::*;
 
 const CHANNEL_BUFF: usize = 2048;
+// const TIMER_INTERVEL: u128 = 1_000_000_000; // 1秒
 const TIMER_INTERVEL: u128 = 100_000_000; // 100毫秒
 const EMPTY_SLEEP: u64 = 5;
 
@@ -154,13 +155,18 @@ fn writer_thread(running: Arc<AtomicBool>, writer_id: u64, rx: Receiver<Arc<Pack
                     if node.store_ctx.is_none() {
                         node.store_ctx = Some(StoreCtx::new());
                     }
-                    store.store(node.store_ctx.as_ref().unwrap(), pkt, now);
+                    if store
+                        .store(node.store_ctx.as_ref().unwrap(), pkt, now)
+                        .is_err()
+                    {
+                        break;
+                    }
 
                     if node.is_fin() {
                         println!("thread {}. node is fin", writer_id);
                         remove_key = Some(node.key);
 
-                        store.link_fin(&node.key, now);
+                        let _ = store.link_fin(&node.key, node.start_time, now);
                         // if time_index
                         //     .save_index(&node.key, node.start_time, now)
                         //     .is_err()
@@ -182,15 +188,22 @@ fn writer_thread(running: Arc<AtomicBool>, writer_id: u64, rx: Receiver<Arc<Pack
             }
             Err(TryRecvError::Disconnected) => {
                 println!("writer: {:?} recv desconnected", writer_id);
-                return;
+                break;
             }
         }
 
         if now > prev_ts + TIMER_INTERVEL {
             prev_ts = now;
 
-            store.timer(now);
-            flow.timeout(now, |_node| {});
+            if store.timer(now).is_err() {
+                break;
+            }
+
+            flow.timeout(now, |node| {
+                if store.link_fin(&node.key, node.start_time, now).is_err() {
+                    println!("store link fin error. node key{:?}", &node.key);
+                }
+            });
             // flow.timeout(now, |node| {
             //     if time_index
             //         .save_index(&node.key, node.start_time, now)
