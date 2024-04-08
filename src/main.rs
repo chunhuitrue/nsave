@@ -17,7 +17,7 @@ use store::*;
 
 const CHANNEL_BUFF: usize = 2048;
 // const TIMER_INTERVEL: u128 = 1_000_000_000; // 1秒
-const TIMER_INTERVEL: u128 = 100_000_000; // 100毫秒
+const TIMER_INTERVEL: u128 = 500_000_000; // 500毫秒
 const EMPTY_SLEEP: u64 = 5;
 
 fn main() {
@@ -198,7 +198,6 @@ fn writer_thread(running: Arc<AtomicBool>, writer_id: u64, rx: Receiver<Arc<Pack
             if store.timer(now).is_err() {
                 break;
             }
-
             flow.timeout(now, |node| {
                 if store.link_fin(&node.key, node.start_time, now).is_err() {
                     println!("store link fin error. node key{:?}", &node.key);

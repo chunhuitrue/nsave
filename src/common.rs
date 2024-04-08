@@ -1,25 +1,9 @@
 #![allow(dead_code)]
 
-use chrono::{DateTime, Datelike, Duration, Local, NaiveDateTime, TimeZone, Timelike};
-
 pub const THREAD_NUM: u64 = 2;
 pub const STORE_PATH: &str = "/Users/lch/misc/nsave_data/";
-
-pub fn ts_date_local(timestamp_nanos: u128) -> DateTime<Local> {
-    let naive_datetime = DateTime::from_timestamp(
-        (timestamp_nanos / 1_000_000_000).try_into().unwrap(),
-        (timestamp_nanos % 1_000_000_000) as u32,
-    );
-    Local.from_utc_datetime(
-        &naive_datetime
-            .expect("Failed to convert to local time")
-            .naive_utc(),
-    )
-}
-
-pub fn mk_minute_dir(_timestamp_nanos: u128) -> Result<(), StoreError> {
-    todo!()
-}
+pub const MINUTE_NS: u128 = 1_000_000_000 * 60; // 一分钟
+pub const TIME_SCALE: u128 = 1_000_000_000 * 20; // 20秒
 
 #[derive(Debug)]
 pub enum StoreError {
