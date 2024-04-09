@@ -3,7 +3,7 @@
 pub const THREAD_NUM: u64 = 2;
 pub const STORE_PATH: &str = "/Users/lch/misc/nsave_data/";
 pub const MINUTE_NS: u128 = 1_000_000_000 * 60; // 一分钟
-pub const TIME_SCALE: u128 = 1_000_000_000 * 20; // 20秒
+pub const TIME_SCALE: u32 = 20; // 20秒
 
 #[derive(Debug)]
 pub enum StoreError {
@@ -11,6 +11,7 @@ pub enum StoreError {
     InitError(String),
     FormatError(String),
     ReadError(String),
+    WriteError(String),
 }
 
 impl std::fmt::Display for StoreError {
@@ -20,6 +21,7 @@ impl std::fmt::Display for StoreError {
             StoreError::InitError(msg) => write!(f, "Init error: {}", msg),
             StoreError::FormatError(msg) => write!(f, "Format error: {}", msg),
             StoreError::ReadError(msg) => write!(f, "Read error: {}", msg),
+            StoreError::WriteError(msg) => write!(f, "Write error: {}", msg),
         }
     }
 }

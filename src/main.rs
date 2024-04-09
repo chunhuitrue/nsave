@@ -90,7 +90,7 @@ fn main() {
             }
         }
 
-        // thread::sleep(Duration::from_millis(20)); // todo: del.调试用
+        // thread::sleep(Duration::from_millis(100)); // todo: del.调试用
     }
 
     running.store(false, Ordering::Relaxed);
