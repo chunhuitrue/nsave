@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-// use crate::data::*;
+use crate::chunkpool::*;
 use crate::common::*;
 use crate::packet::*;
 use chrono::{DateTime, Datelike, Local, TimeZone, Timelike};
@@ -8,15 +8,11 @@ use std::fs;
 use std::{cell::RefCell, path::PathBuf, sync::Arc};
 
 #[derive(Debug)]
-pub struct StoreCtx {
-    // data_ctx: DataCtx,
-}
+pub struct StoreCtx {}
 
 impl StoreCtx {
     pub fn new() -> Self {
-        StoreCtx {
-            // data_ctx: DataCtx::new(),
-        }
+        StoreCtx {}
     }
 }
 
@@ -29,31 +25,33 @@ impl Default for StoreCtx {
 #[derive(Debug)]
 pub struct Store {
     store_dir: PathBuf,
-    // data: Data,
     current_dir: RefCell<Option<PathBuf>>,
     current_scale: RefCell<u32>,
+    chunk_pool: ChunkPool,
 }
 
 impl Store {
     pub fn new(store_dir: PathBuf) -> Self {
         Store {
-            store_dir,
-            // data: Data::new(),
+            store_dir: store_dir.clone(),
             current_dir: RefCell::new(None),
             current_scale: RefCell::new(0),
+            chunk_pool: ChunkPool::new(store_dir),
         }
     }
 
     pub fn init(&self) -> Result<(), StoreError> {
-        // self.data.init(&self.dir)?;
+        self.chunk_pool.init()?;
         Ok(())
     }
 
     pub fn store(&self, _ctx: &StoreCtx, _pkt: Arc<Packet>, now: u128) -> Result<(), StoreError> {
-        // self.data.store(&ctx.data_ctx, pkt, now);
         if self.current_dir.borrow().is_none() {
             self.mk_time_scale_dir(now)?;
         }
+
+        // todo 写入数据包，回填之前的数据包的偏移，记录当前数据包的偏移到ctx
+
         Ok(())
     }
 
@@ -63,28 +61,23 @@ impl Store {
         _start_time: u128,
         _end_time: u128,
     ) -> Result<(), StoreError> {
-        // self.data.link_fin(tuple5, now);
         Ok(())
     }
 
     pub fn timer(&self, now: u128) -> Result<(), StoreError> {
-        // self.data.timer(now);
-
         if self.current_dir.borrow().is_none() {
             return Ok(());
         }
 
         let now_scale = ts_date(now).second() / TIME_SCALE;
         if now_scale != *self.current_scale.borrow() {
-            self.flush(now)?;
+            self.time_scale_change(now)?;
             *self.current_dir.borrow_mut() = None;
         }
         Ok(())
     }
 
-    // 当时间刻度scal变化时，新建新的dir或文件之前，需要刷新现有的到磁盘
-    fn flush(&self, _now: u128) -> Result<(), StoreError> {
-        // todo
+    fn time_scale_change(&self, _now: u128) -> Result<(), StoreError> {
         dbg!("flush data index to disk ...");
         Ok(())
     }

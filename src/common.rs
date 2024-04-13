@@ -5,6 +5,10 @@ pub const STORE_PATH: &str = "/Users/lch/misc/nsave_data/";
 pub const MINUTE_NS: u128 = 1_000_000_000 * 60; // 一分钟
 pub const TIME_SCALE: u32 = 20; // 20秒
 
+pub const POOL_SIZE: u64 = 1024 * 1024 * 4; // 4M
+pub const FILE_SIZE: u64 = 1024 * 1024; // 1M
+pub const CHUNK_SIZE: u32 = 1024 * 80; // 80k
+
 #[derive(Debug)]
 pub enum StoreError {
     IoError(std::io::Error),
