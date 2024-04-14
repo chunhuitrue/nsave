@@ -8,11 +8,15 @@ use std::fs;
 use std::{cell::RefCell, path::PathBuf, sync::Arc};
 
 #[derive(Debug)]
-pub struct StoreCtx {}
+pub struct StoreCtx {
+    prev_pkt_offset: RefCell<ChunkOffset>,
+}
 
 impl StoreCtx {
     pub fn new() -> Self {
-        StoreCtx {}
+        StoreCtx {
+            prev_pkt_offset: RefCell::new(ChunkOffset::new()),
+        }
     }
 }
 
@@ -45,13 +49,19 @@ impl Store {
         Ok(())
     }
 
-    pub fn store(&self, _ctx: &StoreCtx, _pkt: Arc<Packet>, now: u128) -> Result<(), StoreError> {
+    pub fn store(&self, ctx: &StoreCtx, pkt: Arc<Packet>, now: u128) -> Result<(), StoreError> {
         if self.current_dir.borrow().is_none() {
             self.mk_time_scale_dir(now)?;
         }
 
-        // todo 写入数据包，回填之前的数据包的偏移，记录当前数据包的偏移到ctx
-
+        let pkt_offset = self.chunk_pool.write(pkt, now, |_start_time, _end_time| {
+            dbg!("chunk 回绕，对应的时间目录也回绕");
+        })?; // todo 清除时间索引目录
+        if ctx.prev_pkt_offset.borrow().chunk_id == pkt_offset.chunk_id {
+            self.chunk_pool
+                .update(&ctx.prev_pkt_offset.borrow(), &pkt_offset)?;
+        }
+        *ctx.prev_pkt_offset.borrow_mut() = pkt_offset;
         Ok(())
     }
 

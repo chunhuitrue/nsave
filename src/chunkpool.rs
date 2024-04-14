@@ -1,12 +1,12 @@
 #![allow(dead_code)]
 
 use crate::common::*;
+use crate::packet::*;
 use memmap2::{MmapMut, MmapOptions};
-use std::cell::RefCell;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Cursor, Read, Write};
 use std::os::fd::AsRawFd;
-use std::path::PathBuf;
+use std::{cell::RefCell, path::PathBuf, sync::Arc};
 
 #[derive(Debug)]
 pub struct ChunkPool {
@@ -70,13 +70,71 @@ impl ChunkPool {
         };
         *self.pool_head_map.borrow_mut() = Some(mmap);
 
-        let binding = self.pool_head_map.borrow_mut();
-        let mut cursor = Cursor::new(binding.as_ref().unwrap());
+        let pool_head_map = self.pool_head_map.borrow_mut();
+        let mut cursor = Cursor::new(pool_head_map.as_ref().unwrap());
         let pool_file = PoolHead::deserialize_from(&mut cursor).unwrap();
         *self.pool_head.borrow_mut() = Some(pool_file);
 
-        self.next_chunk()?;
+        self.next_chunk(|_, _| {})?;
+        Ok(())
+    }
 
+    pub fn write<F>(
+        &self,
+        pkt: Arc<Packet>,
+        now: u128,
+        cover_chunk_fn: F,
+    ) -> Result<ChunkOffset, StoreError>
+    where
+        F: Fn(u128, u128),
+    {
+        if self.chunk_head.borrow().as_ref().unwrap().start_time == 0 {
+            self.chunk_head.borrow_mut().as_mut().unwrap().start_time = now;
+        }
+
+        if CHUNK_SIZE - self.chunk_head.borrow().as_ref().unwrap().filled_size
+            < pkt.serialize_size()
+        {
+            self.flush()?;
+            self.next_chunk(cover_chunk_fn)?;
+        }
+
+        let pkt_start = self.chunk_head.borrow().as_ref().unwrap().filled_size;
+        let mut chunk_map = self.chunk_map.borrow_mut();
+        let chunk_u8: &mut [u8] = chunk_map.as_mut().unwrap();
+        let mut chunk_offset = &mut chunk_u8[pkt_start as usize..];
+
+        pkt.serialize_into(&mut chunk_offset)?;
+        self.chunk_head.borrow_mut().as_mut().unwrap().filled_size += pkt.serialize_size();
+        self.chunk_head.borrow_mut().as_mut().unwrap().end_time = now;
+
+        let mut chunk_id = self.pool_head.borrow().as_ref().unwrap().next_chunk_id;
+        if chunk_id != 0 {
+            chunk_id -= 1;
+        } else {
+            let actual_file_size =
+                ((FILE_SIZE - 1) / (CHUNK_SIZE as u64) + 1) * (CHUNK_SIZE as u64);
+            let actual_file_num = (POOL_SIZE + actual_file_size - 1) / actual_file_size;
+            let file_chunk_num = actual_file_size / (CHUNK_SIZE as u64);
+            let chunk_num = actual_file_num * file_chunk_num;
+            chunk_id = chunk_num as u32 - 1;
+        }
+
+        Ok(ChunkOffset {
+            chunk_id,
+            start_offset: pkt_start,
+        })
+    }
+
+    pub fn update(&self, offset: &ChunkOffset, value: &ChunkOffset) -> Result<(), StoreError> {
+        let offset = offset.start_offset;
+        let value = value.start_offset;
+
+        let mut chunk_map = self.chunk_map.borrow_mut();
+        let chunk_u8: &mut [u8] = chunk_map.as_mut().unwrap();
+        let mut chunk_offset = &mut chunk_u8[offset as usize..];
+
+        chunk_offset.write_all(&value.to_be_bytes())?;
         Ok(())
     }
 
@@ -114,9 +172,14 @@ impl ChunkPool {
         Ok(())
     }
 
-    fn next_chunk(&self) -> Result<(), StoreError> {
+    fn next_chunk<F>(&self, cover_chunk_fn: F) -> Result<(), StoreError>
+    where
+        F: Fn(u128, u128),
+    {
         let actual_file_size = ((FILE_SIZE - 1) / (CHUNK_SIZE as u64) + 1) * (CHUNK_SIZE as u64);
+        let actual_file_num = (POOL_SIZE + actual_file_size - 1) / actual_file_size;
         let file_chunk_num = actual_file_size / (CHUNK_SIZE as u64);
+        let chunk_num = actual_file_num * file_chunk_num;
         let chunk_id = self.pool_head.borrow().as_ref().unwrap().next_chunk_id;
         let file_id = chunk_id / (file_chunk_num as u32);
 
@@ -154,8 +217,16 @@ impl ChunkPool {
         };
         *self.chunk_map.borrow_mut() = Some(mmap);
 
+        let chunk_map = self.chunk_map.borrow_mut();
+        let mut cursor = Cursor::new(chunk_map.as_ref().unwrap());
+        let old_chunk_head = ChunkHead::deserialize_from(&mut cursor).unwrap();
+        cover_chunk_fn(old_chunk_head.start_time, old_chunk_head.end_time);
+
         *self.chunk_head.borrow_mut() = Some(ChunkHead::new());
         self.pool_head.borrow_mut().as_mut().unwrap().next_chunk_id += 1;
+        if self.pool_head.borrow().as_ref().unwrap().next_chunk_id >= chunk_num as u32 {
+            self.pool_head.borrow_mut().as_mut().unwrap().next_chunk_id = 0;
+        }
         Ok(())
     }
 
@@ -177,7 +248,6 @@ impl ChunkPool {
             .unwrap()
             .serialize_into(&mut pool_head_map_offset)?;
         self.pool_head_map.borrow().as_ref().unwrap().flush()?;
-
         Ok(())
     }
 }
@@ -264,5 +334,59 @@ impl ChunkHead {
 
     pub fn serialize_size() -> usize {
         36
+    }
+}
+
+#[derive(Debug)]
+pub struct ChunkOffset {
+    pub chunk_id: u32,
+    pub start_offset: u32,
+}
+
+impl ChunkOffset {
+    pub fn new() -> Self {
+        ChunkOffset {
+            chunk_id: 0,
+            start_offset: 0,
+        }
+    }
+}
+
+impl Default for ChunkOffset {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug)]
+pub struct StorePacket {
+    next_offset: u32,
+    timestamp: u128,
+    data_len: u16,
+    data: Vec<u8>,
+}
+
+impl StorePacket {
+    pub fn deserialize_from<R: Read>(reader: &mut R) -> Result<Self, StoreError> {
+        let mut next_offset_bytes = [0; 4];
+        let mut timestamp_bytes = [0; 16];
+        let mut data_len_bytes = [0; 2];
+
+        reader.read_exact(&mut next_offset_bytes)?;
+        reader.read_exact(&mut timestamp_bytes)?;
+        reader.read_exact(&mut data_len_bytes)?;
+
+        let next_offset = u32::from_be_bytes(next_offset_bytes);
+        let timestamp = u128::from_be_bytes(timestamp_bytes);
+        let data_len = u16::from_be_bytes(data_len_bytes);
+        let mut data = vec![0; data_len.into()];
+        reader.read_exact(&mut data)?;
+
+        Ok(StorePacket {
+            next_offset,
+            timestamp,
+            data_len,
+            data,
+        })
     }
 }

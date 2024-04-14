@@ -7,7 +7,7 @@ use std::cell::RefCell;
 use std::collections::hash_map::DefaultHasher;
 use std::fmt;
 use std::hash::{Hash, Hasher};
-use std::io::{Read, Write};
+use std::io::Write;
 use std::net::IpAddr;
 use std::net::Ipv4Addr;
 use std::ops::Deref;
@@ -223,34 +223,16 @@ impl Packet {
     }
 
     pub fn serialize_into<W: Write>(&self, writer: &mut W) -> Result<(), StoreError> {
+        let next_offset: u32 = 0;
+        writer.write_all(&next_offset.to_le_bytes())?;
         writer.write_all(&self.timestamp.to_le_bytes())?;
         writer.write_all(&((self.data.len() as u16).to_le_bytes()))?;
         writer.write_all(&self.data)?;
         Ok(())
     }
 
-    pub fn deserialize_from<R: Read>(reader: &mut R) -> Result<Self, StoreError> {
-        let mut ts = [0; 16];
-        let mut len = [0; 2];
-        reader.read_exact(&mut ts)?;
-        reader.read_exact(&mut len)?;
-
-        let timestamp = u128::from_le_bytes(ts);
-        let data_len = u16::from_le_bytes(len);
-        let mut data = vec![0; data_len.into()];
-        reader.read_exact(&mut data)?;
-
-        let pkt = Packet::new(data, timestamp);
-        if pkt.decode().is_err() {
-            return Err(StoreError::ReadError(
-                "read packet decode error".to_string(),
-            ));
-        }
-        Ok(pkt)
-    }
-
-    pub fn serialize_size(&self) -> usize {
-        16 + 2 + self.data.len()
+    pub fn serialize_size(&self) -> u32 {
+        22 + self.data.len() as u32
     }
 }
 
@@ -308,7 +290,6 @@ pub struct PacketKey {
 mod tests {
     use super::*;
     use etherparse::*;
-    use std::io::Cursor;
 
     #[test]
     fn test_decode() {
@@ -383,20 +364,6 @@ mod tests {
         assert_eq!(pkt_c2s.hash_key(), pkt_s2c.hash_key());
         assert_eq!(hash_val(&pkt_c2s), hash_val(&pkt_s2c));
         assert_ne!(hash_val(&pkt_c2s), hash_val(&pkt_other));
-    }
-
-    #[test]
-    fn test_pkt_se_de() {
-        let pkt = build_tcp([1, 1, 1, 1], [2, 2, 2, 2], 1, 2);
-        let _ = pkt.decode();
-
-        let mut vec = Vec::new();
-        pkt.serialize_into(&mut vec).unwrap();
-        assert_eq!(vec.len(), pkt.serialize_size());
-
-        let mut cursor = Cursor::new(vec);
-        let deseri_pkt: Packet = Packet::deserialize_from(&mut cursor).unwrap();
-        assert_eq!(pkt, deseri_pkt);
     }
 
     fn build_tcp(sip: [u8; 4], dip: [u8; 4], sport: u16, dport: u16) -> Packet {
