@@ -7,6 +7,10 @@ use chrono::{DateTime, Datelike, Local, TimeZone, Timelike};
 use std::fs;
 use std::{cell::RefCell, path::PathBuf, sync::Arc};
 
+const POOL_SIZE: u64 = 1024 * 1024 * 4; // 4M
+const FILE_SIZE: u64 = 1024 * 1024; // 1M
+const CHUNK_SIZE: u32 = 1024 * 80; // 80k
+
 #[derive(Debug)]
 pub struct StoreCtx {
     prev_pkt_offset: RefCell<ChunkOffset>,
@@ -40,7 +44,7 @@ impl Store {
             store_dir: store_dir.clone(),
             current_dir: RefCell::new(None),
             current_scale: RefCell::new(0),
-            chunk_pool: ChunkPool::new(store_dir),
+            chunk_pool: ChunkPool::new(store_dir, POOL_SIZE, FILE_SIZE, CHUNK_SIZE),
         }
     }
 
@@ -55,8 +59,8 @@ impl Store {
         }
 
         let pkt_offset = self.chunk_pool.write(pkt, now, |_start_time, _end_time| {
-            dbg!("chunk 回绕，对应的时间目录也回绕");
-        })?; // todo 清除时间索引目录
+            dbg!("chunk 回绕，对应的时间目录也回绕"); // todo 清除时间索引目录
+        })?;
         if ctx.prev_pkt_offset.borrow().chunk_id == pkt_offset.chunk_id {
             self.chunk_pool
                 .update(&ctx.prev_pkt_offset.borrow(), &pkt_offset)?;

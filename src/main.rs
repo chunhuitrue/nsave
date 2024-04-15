@@ -137,8 +137,8 @@ fn writer_thread(running: Arc<AtomicBool>, writer_id: u64, rx: Receiver<Arc<Pack
     data_path.push(STORE_PATH);
     data_path.push(format!("{:03}", writer_id));
     let store = Store::new(data_path);
-    if store.init().is_err() {
-        println!("packet store init error.");
+    if let Err(e) = store.init() {
+        println!("packet store init error: {}", e);
         return;
     }
 

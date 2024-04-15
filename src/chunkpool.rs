@@ -11,9 +11,19 @@ use std::{cell::RefCell, path::PathBuf, sync::Arc};
 #[derive(Debug)]
 pub struct ChunkPool {
     pool_path: PathBuf,
+    pool_size: u64,
+    file_size: u64,
+    chunk_size: u32,
+
+    actual_file_size: u64,
+    actual_file_num: u32,
+    file_chunk_num: u32,
+    chunk_num: u32,
+
     pool_head_fd: RefCell<Option<File>>,
     pool_head_map: RefCell<Option<MmapMut>>,
     pool_head: RefCell<Option<PoolHead>>,
+
     chunk_file_id: RefCell<Option<u32>>,
     chunk_file_fd: RefCell<Option<File>>,
     chunk_map: RefCell<Option<MmapMut>>,
@@ -21,15 +31,29 @@ pub struct ChunkPool {
 }
 
 impl ChunkPool {
-    pub fn new(store_dir: PathBuf) -> Self {
+    pub fn new(store_dir: PathBuf, pool_size: u64, file_size: u64, chunk_size: u32) -> Self {
         let mut path = PathBuf::new();
         path.push(store_dir);
         path.push("chunk_pool");
+        let actual_file_size = ((file_size - 1) / (chunk_size as u64) + 1) * (chunk_size as u64);
+        let actual_file_num = ((pool_size + actual_file_size - 1) / actual_file_size) as u32;
+        let file_chunk_num = (actual_file_size / (chunk_size as u64)) as u32;
+        let chunk_num = actual_file_num * file_chunk_num;
         ChunkPool {
             pool_path: path,
+            pool_size,
+            file_size,
+            chunk_size,
+
+            actual_file_size,
+            actual_file_num,
+            file_chunk_num,
+            chunk_num,
+
             pool_head_fd: RefCell::new(None),
             pool_head_map: RefCell::new(None),
             pool_head: RefCell::new(None),
+
             chunk_file_id: RefCell::new(None),
             chunk_file_fd: RefCell::new(None),
             chunk_map: RefCell::new(None),
@@ -75,6 +99,7 @@ impl ChunkPool {
         let pool_file = PoolHead::deserialize_from(&mut cursor).unwrap();
         *self.pool_head.borrow_mut() = Some(pool_file);
 
+        dbg!("init up next chunk");
         self.next_chunk(|_, _| {})?;
         Ok(())
     }
@@ -92,7 +117,7 @@ impl ChunkPool {
             self.chunk_head.borrow_mut().as_mut().unwrap().start_time = now;
         }
 
-        if CHUNK_SIZE - self.chunk_head.borrow().as_ref().unwrap().filled_size
+        if self.chunk_size - self.chunk_head.borrow().as_ref().unwrap().filled_size
             < pkt.serialize_size()
         {
             self.flush()?;
@@ -112,12 +137,7 @@ impl ChunkPool {
         if chunk_id != 0 {
             chunk_id -= 1;
         } else {
-            let actual_file_size =
-                ((FILE_SIZE - 1) / (CHUNK_SIZE as u64) + 1) * (CHUNK_SIZE as u64);
-            let actual_file_num = (POOL_SIZE + actual_file_size - 1) / actual_file_size;
-            let file_chunk_num = actual_file_size / (CHUNK_SIZE as u64);
-            let chunk_num = actual_file_num * file_chunk_num;
-            chunk_id = chunk_num as u32 - 1;
+            chunk_id = self.chunk_num - 1;
         }
 
         Ok(ChunkOffset {
@@ -148,9 +168,9 @@ impl ChunkPool {
         match result {
             Ok(mut pool_file_fd) => {
                 let pool_file = PoolHead {
-                    pool_size: POOL_SIZE,
-                    file_size: FILE_SIZE,
-                    chunk_size: CHUNK_SIZE,
+                    pool_size: self.pool_size,
+                    file_size: self.file_size,
+                    chunk_size: self.chunk_size,
                     next_chunk_id: 0,
                 };
                 pool_file.serialize_into(&mut pool_file_fd)?;
@@ -162,12 +182,10 @@ impl ChunkPool {
     }
 
     fn create_chunk_file(&self) -> Result<(), StoreError> {
-        let actual_file_size = ((FILE_SIZE - 1) / (CHUNK_SIZE as u64) + 1) * (CHUNK_SIZE as u64);
-        let actual_file_num = (POOL_SIZE + actual_file_size - 1) / actual_file_size;
-        for i in 0..actual_file_num {
+        for i in 0..self.actual_file_num {
             let path = self.pool_path.join(format!("{:03}.da", i));
             let data_file = File::create(path)?;
-            data_file.set_len(actual_file_size)?;
+            data_file.set_len(self.actual_file_size)?;
         }
         Ok(())
     }
@@ -176,16 +194,13 @@ impl ChunkPool {
     where
         F: Fn(u128, u128),
     {
-        let actual_file_size = ((FILE_SIZE - 1) / (CHUNK_SIZE as u64) + 1) * (CHUNK_SIZE as u64);
-        let actual_file_num = (POOL_SIZE + actual_file_size - 1) / actual_file_size;
-        let file_chunk_num = actual_file_size / (CHUNK_SIZE as u64);
-        let chunk_num = actual_file_num * file_chunk_num;
         let chunk_id = self.pool_head.borrow().as_ref().unwrap().next_chunk_id;
-        let file_id = chunk_id / (file_chunk_num as u32);
-
+        let file_id = chunk_id / self.file_chunk_num;
+        dbg!(chunk_id, file_id, self.file_chunk_num);
         if self.chunk_file_id.borrow().is_none() || self.chunk_file_id.borrow().unwrap() != file_id
         {
             let path = self.pool_path.join(format!("{:03}.da", file_id));
+            dbg!(&path);
             let result = OpenOptions::new()
                 .read(true)
                 .write(true)
@@ -194,19 +209,23 @@ impl ChunkPool {
                 .open(path);
             match result {
                 Ok(file_fd) => {
+                    dbg!(" open 222");
                     *self.chunk_file_id.borrow_mut() = Some(file_id);
                     *self.chunk_file_fd.borrow_mut() = Some(file_fd);
                 }
-                Err(e) => return Err(StoreError::IoError(e)),
+                Err(e) => {
+                    return Err(StoreError::IoError(e));
+                }
             }
         }
+        dbg!("after open");
 
-        let inner_chunk_id = chunk_id - file_id * (file_chunk_num as u32);
-        let chunk_offset = inner_chunk_id * CHUNK_SIZE;
+        let inner_chunk_id = chunk_id - file_id * self.file_chunk_num;
+        let chunk_offset = inner_chunk_id * self.chunk_size;
         let mmap = unsafe {
             MmapOptions::new()
                 .offset(chunk_offset.into())
-                .len(CHUNK_SIZE as usize)
+                .len(self.chunk_size as usize)
                 .map_mut(
                     self.chunk_file_fd
                         .borrow_mut()
@@ -216,37 +235,43 @@ impl ChunkPool {
                 )?
         };
         *self.chunk_map.borrow_mut() = Some(mmap);
+        dbg!("222");
 
         let chunk_map = self.chunk_map.borrow_mut();
         let mut cursor = Cursor::new(chunk_map.as_ref().unwrap());
         let old_chunk_head = ChunkHead::deserialize_from(&mut cursor).unwrap();
         cover_chunk_fn(old_chunk_head.start_time, old_chunk_head.end_time);
+        dbg!("333");
 
         *self.chunk_head.borrow_mut() = Some(ChunkHead::new());
         self.pool_head.borrow_mut().as_mut().unwrap().next_chunk_id += 1;
-        if self.pool_head.borrow().as_ref().unwrap().next_chunk_id >= chunk_num as u32 {
+        if self.pool_head.borrow().as_ref().unwrap().next_chunk_id >= self.chunk_num {
             self.pool_head.borrow_mut().as_mut().unwrap().next_chunk_id = 0;
         }
         Ok(())
     }
 
     fn flush(&self) -> Result<(), StoreError> {
-        let mut chunk_head_map = self.chunk_map.borrow_mut();
-        let mut chunk_head_map_offset: &mut [u8] = chunk_head_map.as_mut().unwrap();
-        self.chunk_head
-            .borrow()
-            .as_ref()
-            .unwrap()
-            .serialize_into(&mut chunk_head_map_offset)?;
+        {
+            let mut chunk_head_map = self.chunk_map.borrow_mut();
+            let mut chunk_head_map_offset: &mut [u8] = chunk_head_map.as_mut().unwrap();
+            self.chunk_head
+                .borrow()
+                .as_ref()
+                .unwrap()
+                .serialize_into(&mut chunk_head_map_offset)?;
+        }
         self.chunk_map.borrow().as_ref().unwrap().flush()?;
 
-        let mut pool_head_map = self.pool_head_map.borrow_mut();
-        let mut pool_head_map_offset: &mut [u8] = pool_head_map.as_mut().unwrap();
-        self.pool_head
-            .borrow()
-            .as_ref()
-            .unwrap()
-            .serialize_into(&mut pool_head_map_offset)?;
+        {
+            let mut pool_head_map = self.pool_head_map.borrow_mut();
+            let mut pool_head_map_offset: &mut [u8] = pool_head_map.as_mut().unwrap();
+            self.pool_head
+                .borrow()
+                .as_ref()
+                .unwrap()
+                .serialize_into(&mut pool_head_map_offset)?;
+        }
         self.pool_head_map.borrow().as_ref().unwrap().flush()?;
         Ok(())
     }
