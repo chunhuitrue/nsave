@@ -2,38 +2,61 @@
 
 use chrono::NaiveDateTime;
 use clap::{arg, value_parser, Command};
+use libnsave::chunkpool::*;
+use libnsave::common::*;
 use libnsave::packet::*;
 use libnsave::timeindex::*;
 use std::net::IpAddr;
 use std::path::PathBuf;
 
-fn main() {
+fn main() -> Result<(), StoreError> {
     let matches = cli().get_matches();
     if let Some(config_path) = matches.get_one::<PathBuf>("config") {
         println!("config file: {}", config_path.display());
     }
-    match matches
-        .get_one::<u8>("debug")
-        .expect("Count's are defaulted")
-    {
-        0 => {}
-        1 => println!("Debug mode is kind of on"),
-        2 => println!("Debug mode is on"),
-        _ => println!("Don't be crazy"),
-    }
+    // let mut debug_level: u8 = 0;
+    // match matches
+    //     .get_one::<u8>("debug")
+    //     .expect("Count's are defaulted")
+    // {
+    //     0 => {}
+    //     1 => debug_level = 1,
+    //     2 => debug_level = 2,
+    //     3 => debug_level = 3,
+    //     _ => {}
+    // }
     match matches.subcommand() {
         Some(("dump", sub_matches)) => {
-            let file = sub_matches
-                .get_one::<String>("FILENAME")
-                .expect("required file name");
-            dump_ti_file(file.into());
+            if let Some(pool_file) = sub_matches.get_one::<String>("pool_file") {
+                dump_pool_file(pool_file.into())?;
+            }
+
+            if let Some(data_file) = sub_matches.get_one::<String>("data_file") {
+                dump_data_file(data_file.into())?;
+            }
+
+            match (
+                sub_matches.get_one::<String>("chunk_pool_path"),
+                sub_matches.get_one::<u32>("chunk_id"),
+            ) {
+                (Some(path), Some(chunk_id)) => {
+                    dump_chunk(path.into(), *chunk_id)?;
+                }
+                (_, _) => {
+                    return Err(StoreError::CliError("path or chunk_id error".to_string()));
+                }
+            }
+
+            Ok(())
         }
         Some(("search", sub_matches)) => {
             let start_time = sub_matches.get_one::<NaiveDateTime>("start_time");
             let end_time = sub_matches.get_one::<NaiveDateTime>("end_time");
             if start_time >= end_time {
                 println!("The start time must be younger than the end time.");
-                return;
+                return Err(StoreError::ReadError(
+                    "can not find parent path".to_string(),
+                ));
             }
             let sip = sub_matches.get_one::<IpAddr>("sip");
             let dip = sub_matches.get_one::<IpAddr>("dip");
@@ -49,9 +72,11 @@ fn main() {
                 sport.copied(),
                 dport.copied(),
             );
+            Ok(())
         }
         _ => {
-            println!("unknown command.")
+            println!("unknown command.");
+            Err(StoreError::CliError("unknown command".to_string()))
         }
     }
 }
@@ -70,9 +95,28 @@ fn cli() -> Command {
         .arg(arg!(-d --debug ... "Turn debugging information on"))
         .subcommand(
             Command::new("dump")
-                .about("dump a file. .ti .ci .ne")
-                .arg(arg!(<FILENAME> "the file name. .ti .ci .ne"))
-                .arg_required_else_help(true),
+                .about("dump a file. .pl .ti .ci .da or chunk")
+                .arg(
+                    arg!(-p - -pool_file <FILENAME>)
+                        .help("dump pool file")
+                        .required(false),
+                )
+                .arg(
+                    arg!(-d - -data_file <FILENAME>)
+                        .help("dump data file")
+                        .required(false),
+                )
+                .arg(
+                    arg!(-P - -chunk_pool_path <PATH>)
+                        .help("chunk_pool path")
+                        .required(false),
+                )
+                .arg(
+                    arg!(-c - -chunk_id <CHUNKID>)
+                        .help("dump chunk")
+                        .value_parser(value_parser!(u32))
+                        .required(false),
+                ),
         )
         .subcommand(
             Command::new("search")

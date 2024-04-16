@@ -13,10 +13,8 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use store::*;
-// use timeindex::*;
 
 const CHANNEL_BUFF: usize = 2048;
-// const TIMER_INTERVEL: u128 = 1_000_000_000; // 1秒
 const TIMER_INTERVEL: u128 = 500_000_000; // 500毫秒
 const EMPTY_SLEEP: u64 = 5;
 

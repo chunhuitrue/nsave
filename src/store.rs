@@ -3,7 +3,7 @@
 use crate::chunkpool::*;
 use crate::common::*;
 use crate::packet::*;
-use chrono::{DateTime, Datelike, Local, TimeZone, Timelike};
+use chrono::{Datelike, Timelike};
 use std::fs;
 use std::{cell::RefCell, path::PathBuf, sync::Arc};
 
@@ -58,9 +58,9 @@ impl Store {
             self.mk_time_scale_dir(now)?;
         }
 
-        let pkt_offset = self.chunk_pool.write(pkt, now, |_start_time, _end_time| {
-            dbg!("chunk 回绕，对应的时间目录也回绕"); // todo 清除时间索引目录
-        })?;
+        let pkt_offset = self
+            .chunk_pool
+            .write(pkt, now, |_start_time, _end_time| {})?; // todo 清除时间索引目录
         if ctx.prev_pkt_offset.borrow().chunk_id == pkt_offset.chunk_id {
             self.chunk_pool
                 .update(&ctx.prev_pkt_offset.borrow(), &pkt_offset)?;
@@ -116,16 +116,4 @@ impl Store {
         *self.current_scale.borrow_mut() = scale;
         Ok(())
     }
-}
-
-fn ts_date(timestamp: u128) -> DateTime<Local> {
-    let naive_datetime = DateTime::from_timestamp(
-        (timestamp / 1_000_000_000).try_into().unwrap(),
-        (timestamp % 1_000_000_000) as u32,
-    );
-    Local.from_utc_datetime(
-        &naive_datetime
-            .expect("Failed to convert to local time")
-            .naive_utc(),
-    )
 }

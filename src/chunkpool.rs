@@ -3,6 +3,7 @@
 use crate::common::*;
 use crate::packet::*;
 use memmap2::{MmapMut, MmapOptions};
+use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Cursor, Read, Write};
 use std::os::fd::AsRawFd;
@@ -35,20 +36,17 @@ impl ChunkPool {
         let mut path = PathBuf::new();
         path.push(store_dir);
         path.push("chunk_pool");
-        let actual_file_size = ((file_size - 1) / (chunk_size as u64) + 1) * (chunk_size as u64);
-        let actual_file_num = ((pool_size + actual_file_size - 1) / actual_file_size) as u32;
-        let file_chunk_num = (actual_file_size / (chunk_size as u64)) as u32;
-        let chunk_num = actual_file_num * file_chunk_num;
+        let actual_size = ActualSize::new(pool_size, file_size, chunk_size);
         ChunkPool {
             pool_path: path,
             pool_size,
             file_size,
             chunk_size,
 
-            actual_file_size,
-            actual_file_num,
-            file_chunk_num,
-            chunk_num,
+            actual_file_size: actual_size.actual_file_size,
+            actual_file_num: actual_size.actual_file_num,
+            file_chunk_num: actual_size.file_chunk_num,
+            chunk_num: actual_size.chunk_num,
 
             pool_head_fd: RefCell::new(None),
             pool_head_map: RefCell::new(None),
@@ -99,7 +97,6 @@ impl ChunkPool {
         let pool_file = PoolHead::deserialize_from(&mut cursor).unwrap();
         *self.pool_head.borrow_mut() = Some(pool_file);
 
-        dbg!("init up next chunk");
         self.next_chunk(|_, _| {})?;
         Ok(())
     }
@@ -196,11 +193,9 @@ impl ChunkPool {
     {
         let chunk_id = self.pool_head.borrow().as_ref().unwrap().next_chunk_id;
         let file_id = chunk_id / self.file_chunk_num;
-        dbg!(chunk_id, file_id, self.file_chunk_num);
         if self.chunk_file_id.borrow().is_none() || self.chunk_file_id.borrow().unwrap() != file_id
         {
             let path = self.pool_path.join(format!("{:03}.da", file_id));
-            dbg!(&path);
             let result = OpenOptions::new()
                 .read(true)
                 .write(true)
@@ -209,7 +204,6 @@ impl ChunkPool {
                 .open(path);
             match result {
                 Ok(file_fd) => {
-                    dbg!(" open 222");
                     *self.chunk_file_id.borrow_mut() = Some(file_id);
                     *self.chunk_file_fd.borrow_mut() = Some(file_fd);
                 }
@@ -218,7 +212,6 @@ impl ChunkPool {
                 }
             }
         }
-        dbg!("after open");
 
         let inner_chunk_id = chunk_id - file_id * self.file_chunk_num;
         let chunk_offset = inner_chunk_id * self.chunk_size;
@@ -235,13 +228,11 @@ impl ChunkPool {
                 )?
         };
         *self.chunk_map.borrow_mut() = Some(mmap);
-        dbg!("222");
 
         let chunk_map = self.chunk_map.borrow_mut();
         let mut cursor = Cursor::new(chunk_map.as_ref().unwrap());
-        let old_chunk_head = ChunkHead::deserialize_from(&mut cursor).unwrap();
+        let old_chunk_head = ChunkHead::deserialize_from(&mut cursor)?;
         cover_chunk_fn(old_chunk_head.start_time, old_chunk_head.end_time);
-        dbg!("333");
 
         *self.chunk_head.borrow_mut() = Some(ChunkHead::new());
         self.pool_head.borrow_mut().as_mut().unwrap().next_chunk_id += 1;
@@ -278,6 +269,42 @@ impl ChunkPool {
 }
 
 #[derive(Debug)]
+struct ActualSize {
+    actual_file_size: u64,
+    actual_file_num: u32,
+    file_chunk_num: u32,
+    chunk_num: u32,
+}
+
+impl ActualSize {
+    pub fn new(pool_size: u64, file_size: u64, chunk_size: u32) -> Self {
+        let actual_file_size = ((file_size - 1) / (chunk_size as u64) + 1) * (chunk_size as u64);
+        let actual_file_num = ((pool_size + actual_file_size - 1) / actual_file_size) as u32;
+        let file_chunk_num = (actual_file_size / (chunk_size as u64)) as u32;
+        let chunk_num = actual_file_num * file_chunk_num;
+        ActualSize {
+            actual_file_size,
+            actual_file_num,
+            file_chunk_num,
+            chunk_num,
+        }
+    }
+}
+
+impl fmt::Display for ActualSize {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "ActualSize {{ actual_file_size: {} M, file_num: {}, file_chunk_num: {}, chunk_num: {} }}",
+            self.actual_file_size / 1024 / 1024,
+            self.actual_file_num,
+            self.file_chunk_num,
+            self.chunk_num
+        )
+    }
+}
+
+#[derive(Debug)]
 struct PoolHead {
     pool_size: u64,
     file_size: u64,
@@ -306,15 +333,28 @@ impl PoolHead {
         reader.read_exact(&mut current_chunk_bytes)?;
 
         Ok(PoolHead {
-            pool_size: u64::from_be_bytes(pool_size_bytes),
-            file_size: u64::from_be_bytes(file_size_bytes),
-            chunk_size: u32::from_be_bytes(chunk_size_bytes),
-            next_chunk_id: u32::from_be_bytes(current_chunk_bytes),
+            pool_size: u64::from_le_bytes(pool_size_bytes),
+            file_size: u64::from_le_bytes(file_size_bytes),
+            chunk_size: u32::from_le_bytes(chunk_size_bytes),
+            next_chunk_id: u32::from_le_bytes(current_chunk_bytes),
         })
     }
 
     pub fn serialize_size() -> usize {
         24
+    }
+}
+
+impl fmt::Display for PoolHead {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "PoolHead {{ pool_size: {} M, file_size: {} M, chunk_size: {} K, next_chunk_id: {} }}",
+            self.pool_size / 1024 / 1024,
+            self.file_size / 1024 / 1024,
+            self.chunk_size / 1024,
+            self.next_chunk_id
+        )
     }
 }
 
@@ -351,14 +391,26 @@ impl ChunkHead {
         reader.read_exact(&mut data_size_bytes)?;
 
         Ok(ChunkHead {
-            start_time: u128::from_be_bytes(start_time_bytes),
-            end_time: u128::from_be_bytes(end_time_bytes),
-            filled_size: u32::from_be_bytes(data_size_bytes),
+            start_time: u128::from_le_bytes(start_time_bytes),
+            end_time: u128::from_le_bytes(end_time_bytes),
+            filled_size: u32::from_le_bytes(data_size_bytes),
         })
     }
 
     pub fn serialize_size() -> usize {
         36
+    }
+}
+
+impl fmt::Display for ChunkHead {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "ChunkHead {{ start_time: {}, end_time: {}, filled_size: {} K }}",
+            ts_date(self.start_time),
+            ts_date(self.end_time),
+            self.filled_size / 1024,
+        )
     }
 }
 
@@ -401,9 +453,9 @@ impl StorePacket {
         reader.read_exact(&mut timestamp_bytes)?;
         reader.read_exact(&mut data_len_bytes)?;
 
-        let next_offset = u32::from_be_bytes(next_offset_bytes);
-        let timestamp = u128::from_be_bytes(timestamp_bytes);
-        let data_len = u16::from_be_bytes(data_len_bytes);
+        let next_offset = u32::from_le_bytes(next_offset_bytes);
+        let timestamp = u128::from_le_bytes(timestamp_bytes);
+        let data_len = u16::from_le_bytes(data_len_bytes);
         let mut data = vec![0; data_len.into()];
         reader.read_exact(&mut data)?;
 
@@ -414,4 +466,147 @@ impl StorePacket {
             data,
         })
     }
+}
+
+pub fn dump_pool_file(path: PathBuf) -> Result<(), StoreError> {
+    match path.extension() {
+        Some(ext) => {
+            if !ext.to_str().unwrap().eq("pl") {
+                return Err(StoreError::CliError("not pool file".to_string()));
+            }
+        }
+        None => return Err(StoreError::CliError("not pool file".to_string())),
+    };
+
+    if let Ok(mut pool_file) = File::open(&path) {
+        let pool_head = PoolHead::deserialize_from(&mut pool_file)?;
+        println!("pool file {:?}:\n{}", path, pool_head);
+        return Ok(());
+    }
+    println!("open pool file: {:?} error", path);
+    Err(StoreError::CliError("open pool file error".to_string()))
+}
+
+pub fn dump_data_file(da_path: PathBuf) -> Result<(), StoreError> {
+    match da_path.extension() {
+        Some(ext) => {
+            if !ext.to_str().unwrap().eq("da") {
+                return Err(StoreError::CliError("not data file".to_string()));
+            }
+        }
+        None => return Err(StoreError::CliError("not data file".to_string())),
+    };
+
+    let file_stem = da_path
+        .file_stem()
+        .ok_or(StoreError::CliError("filename error".to_string()))?;
+    let file_stem_str = file_stem.to_string_lossy();
+    let file_id = file_stem_str
+        .parse::<u32>()
+        .map_err(|_| StoreError::CliError("filename error".to_string()))?;
+
+    let pool_path = da_path.parent();
+    if pool_path.is_none() {
+        println!("can not find parent path");
+        return Err(StoreError::ReadError(
+            "can not find parent path".to_string(),
+        ));
+    }
+    let pool_path = pool_path.unwrap();
+    let pool_file_path = pool_path.join("pool.pl");
+    let pool_head = match File::open(pool_file_path) {
+        Ok(mut pool_file) => PoolHead::deserialize_from(&mut pool_file)?,
+        Err(e) => return Err(StoreError::CliError(format!("open pool file error: {}", e))),
+    };
+    println!("pool head: {}", pool_head);
+    let actual_size = ActualSize::new(
+        pool_head.pool_size,
+        pool_head.file_size,
+        pool_head.chunk_size,
+    );
+    println!("actual size: {}", actual_size);
+
+    let data_file = match OpenOptions::new()
+        .read(true)
+        .write(false)
+        .create(false)
+        .truncate(false)
+        .open(da_path)
+    {
+        Ok(file_fd) => file_fd,
+        Err(e) => {
+            return Err(StoreError::CliError(format!("open data file error: {}", e)));
+        }
+    };
+
+    for chunk in 0..actual_size.file_chunk_num {
+        let offset = chunk * pool_head.chunk_size;
+        let mmap = unsafe {
+            MmapOptions::new()
+                .offset(offset as u64)
+                .len(pool_head.chunk_size as usize)
+                .map(&data_file)?
+        };
+        let chunk_id = chunk + file_id * actual_size.file_chunk_num;
+        dump_chunk_info(chunk_id, &mmap, &pool_head)?;
+    }
+    Ok(())
+}
+
+pub fn dump_chunk(chunk_pool_path: PathBuf, chunk_id: u32) -> Result<(), StoreError> {
+    let pool_file_path = chunk_pool_path.join("pool.pl");
+    let pool_head = match File::open(pool_file_path) {
+        Ok(mut pool_file) => PoolHead::deserialize_from(&mut pool_file)?,
+        Err(e) => return Err(StoreError::CliError(format!("open pool file error: {}", e))),
+    };
+    println!("pool head: {}", pool_head);
+    let actual_size = ActualSize::new(
+        pool_head.pool_size,
+        pool_head.file_size,
+        pool_head.chunk_size,
+    );
+    println!("actual size: {}", actual_size);
+
+    let data_file_id = chunk_id / actual_size.file_chunk_num;
+    let data_file_path = chunk_pool_path.join(format!("{:03}.da", data_file_id));
+    let data_file = match OpenOptions::new()
+        .read(true)
+        .write(false)
+        .create(false)
+        .truncate(false)
+        .open(data_file_path)
+    {
+        Ok(file_fd) => file_fd,
+        Err(e) => {
+            return Err(StoreError::CliError(format!("open data file error: {}", e)));
+        }
+    };
+
+    let inner_chunk_id = chunk_id - data_file_id * actual_size.file_chunk_num;
+    let chunk_offset = inner_chunk_id * pool_head.chunk_size;
+    let mmap = unsafe {
+        MmapOptions::new()
+            .offset(chunk_offset as u64)
+            .len(pool_head.chunk_size as usize)
+            .map(&data_file)?
+    };
+    dump_chunk_info(chunk_id, &mmap, &pool_head)?;
+    dump_chunk_pkt_info(chunk_id, &mmap)?;
+    Ok(())
+}
+
+fn dump_chunk_info(id: u32, chunk: &[u8], pool_head: &PoolHead) -> Result<(), StoreError> {
+    let mut cursor = Cursor::new(chunk);
+    let chunk_head = ChunkHead::deserialize_from(&mut cursor)?;
+    println!(
+        "id: {:04}, {}, gap size: {} B",
+        id,
+        chunk_head,
+        pool_head.chunk_size - chunk_head.filled_size
+    );
+    Ok(())
+}
+
+fn dump_chunk_pkt_info(id: u32, chunk: &[u8]) -> Result<(), StoreError> {
+    Ok(())
 }

@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+use chrono::{DateTime, Local, TimeZone};
+
 pub const THREAD_NUM: u64 = 2;
 pub const STORE_PATH: &str = "/Users/lch/misc/nsave_data/";
 pub const MINUTE_NS: u128 = 1_000_000_000 * 60; // 一分钟
@@ -12,6 +14,7 @@ pub enum StoreError {
     FormatError(String),
     ReadError(String),
     WriteError(String),
+    CliError(String),
 }
 
 impl std::fmt::Display for StoreError {
@@ -22,6 +25,7 @@ impl std::fmt::Display for StoreError {
             StoreError::FormatError(msg) => write!(f, "Format error: {}", msg),
             StoreError::ReadError(msg) => write!(f, "Read error: {}", msg),
             StoreError::WriteError(msg) => write!(f, "Write error: {}", msg),
+            StoreError::CliError(msg) => write!(f, "Write error: {}", msg),
         }
     }
 }
@@ -38,4 +42,16 @@ impl From<String> for StoreError {
     fn from(err: String) -> Self {
         StoreError::InitError(err)
     }
+}
+
+pub fn ts_date(timestamp: u128) -> DateTime<Local> {
+    let naive_datetime = DateTime::from_timestamp(
+        (timestamp / 1_000_000_000).try_into().unwrap(),
+        (timestamp % 1_000_000_000) as u32,
+    );
+    Local.from_utc_datetime(
+        &naive_datetime
+            .expect("Failed to convert to local time")
+            .naive_utc(),
+    )
 }
