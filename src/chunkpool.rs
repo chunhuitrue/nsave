@@ -468,6 +468,18 @@ impl StorePacket {
     }
 }
 
+impl fmt::Display for StorePacket {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "StorePacket {{ next_offset: {}, timestamp: {}, data_len: {} }}",
+            self.next_offset,
+            ts_date(self.timestamp),
+            self.data_len,
+        )
+    }
+}
+
 pub fn dump_pool_file(path: PathBuf) -> Result<(), StoreError> {
     match path.extension() {
         Some(ext) => {
@@ -591,22 +603,25 @@ pub fn dump_chunk(chunk_pool_path: PathBuf, chunk_id: u32) -> Result<(), StoreEr
             .map(&data_file)?
     };
     dump_chunk_info(chunk_id, &mmap, &pool_head)?;
-    dump_chunk_pkt_info(chunk_id, &mmap)?;
     Ok(())
 }
 
 fn dump_chunk_info(id: u32, chunk: &[u8], pool_head: &PoolHead) -> Result<(), StoreError> {
     let mut cursor = Cursor::new(chunk);
-    let chunk_head = ChunkHead::deserialize_from(&mut cursor)?;
+    let head = ChunkHead::deserialize_from(&mut cursor)?;
     println!(
-        "id: {:04}, {}, gap size: {} B",
+        "id: {:04}, {}, remain size: {} B",
         id,
-        chunk_head,
-        pool_head.chunk_size - chunk_head.filled_size
+        head,
+        pool_head.chunk_size - head.filled_size
     );
-    Ok(())
-}
 
-fn dump_chunk_pkt_info(id: u32, chunk: &[u8]) -> Result<(), StoreError> {
+    if head.filled_size > ChunkHead::serialize_size() as u32 {
+        println!("in chunk packet: \n");
+        let pkt_start = &chunk[ChunkHead::serialize_size()..];
+        let mut cursor = Cursor::new(pkt_start);
+    } else {
+        println!("in chunk packet: None\n");
+    }
     Ok(())
 }

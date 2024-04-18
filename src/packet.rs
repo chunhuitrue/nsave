@@ -222,6 +222,7 @@ impl Packet {
         hash_val(self)
     }
 
+    // 按照StorePacket格式写入
     pub fn serialize_into<W: Write>(&self, writer: &mut W) -> Result<(), StoreError> {
         let next_offset: u32 = 0;
         writer.write_all(&next_offset.to_le_bytes())?;
