@@ -2,7 +2,12 @@
 
 use crate::common::*;
 use crate::packet::*;
+use libc::{fcntl, F_SETLK, F_SETLKW};
 use memmap2::{MmapMut, MmapOptions};
+use pcap::Capture as PcapCapture;
+use pcap::Linktype;
+use pcap::Packet as CapPacket;
+use pcap::PacketHeader as CapPacketHeader;
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Cursor, Read, Write};
@@ -27,6 +32,7 @@ pub struct ChunkPool {
 
     chunk_file_id: RefCell<Option<u32>>,
     chunk_file_fd: RefCell<Option<File>>,
+    chunk_offset: RefCell<u32>,
     chunk_map: RefCell<Option<MmapMut>>,
     chunk_head: RefCell<Option<ChunkHead>>,
 }
@@ -54,6 +60,7 @@ impl ChunkPool {
 
             chunk_file_id: RefCell::new(None),
             chunk_file_fd: RefCell::new(None),
+            chunk_offset: RefCell::new(0),
             chunk_map: RefCell::new(None),
             chunk_head: RefCell::new(None),
         }
@@ -227,6 +234,7 @@ impl ChunkPool {
                         .as_raw_fd(),
                 )?
         };
+        *self.chunk_offset.borrow_mut() = chunk_offset;
         *self.chunk_map.borrow_mut() = Some(mmap);
 
         let chunk_map = self.chunk_map.borrow_mut();
@@ -243,27 +251,115 @@ impl ChunkPool {
     }
 
     fn flush(&self) -> Result<(), StoreError> {
+        self.wlock_chunk()?;
         {
             let mut chunk_head_map = self.chunk_map.borrow_mut();
-            let mut chunk_head_map_offset: &mut [u8] = chunk_head_map.as_mut().unwrap();
+            let mut chunk_head_map_u8: &mut [u8] = chunk_head_map.as_mut().unwrap();
             self.chunk_head
                 .borrow()
                 .as_ref()
                 .unwrap()
-                .serialize_into(&mut chunk_head_map_offset)?;
+                .serialize_into(&mut chunk_head_map_u8)?;
         }
         self.chunk_map.borrow().as_ref().unwrap().flush()?;
+        self.unlock_chunk()?;
 
+        self.wlock_pool_head()?;
         {
             let mut pool_head_map = self.pool_head_map.borrow_mut();
-            let mut pool_head_map_offset: &mut [u8] = pool_head_map.as_mut().unwrap();
+            let mut pool_head_map_u8: &mut [u8] = pool_head_map.as_mut().unwrap();
             self.pool_head
                 .borrow()
                 .as_ref()
                 .unwrap()
-                .serialize_into(&mut pool_head_map_offset)?;
+                .serialize_into(&mut pool_head_map_u8)?;
         }
         self.pool_head_map.borrow().as_ref().unwrap().flush()?;
+        self.unlock_pool_head()?;
+        Ok(())
+    }
+
+    fn wlock_pool_head(&self) -> Result<(), StoreError> {
+        let mut lock = libc::flock {
+            l_type: libc::F_WRLCK,
+            l_whence: libc::SEEK_SET as i16,
+            l_start: 0,
+            l_len: PoolHead::serialize_size() as i64,
+            l_pid: 0,
+        };
+        let result = unsafe {
+            fcntl(
+                self.pool_head_fd.borrow().as_ref().unwrap().as_raw_fd(),
+                F_SETLK,
+                &mut lock,
+            )
+        };
+        if result == -1 {
+            return Err(StoreError::LockError("lock_pool_head error".to_string()));
+        }
+        Ok(())
+    }
+
+    fn unlock_pool_head(&self) -> Result<(), StoreError> {
+        let mut lock = libc::flock {
+            l_type: libc::F_UNLCK,
+            l_whence: libc::SEEK_SET as i16,
+            l_start: 0,
+            l_len: PoolHead::serialize_size() as i64,
+            l_pid: 0,
+        };
+        let result = unsafe {
+            fcntl(
+                self.pool_head_fd.borrow().as_ref().unwrap().as_raw_fd(),
+                F_SETLKW,
+                &mut lock,
+            )
+        };
+        if result == -1 {
+            return Err(StoreError::LockError("unlock_pool_head error".to_string()));
+        }
+        Ok(())
+    }
+
+    fn wlock_chunk(&self) -> Result<(), StoreError> {
+        let mut lock = libc::flock {
+            l_type: libc::F_WRLCK,
+            l_whence: libc::SEEK_SET as i16,
+            l_start: *self.chunk_offset.borrow() as i64,
+            l_len: self.chunk_size as i64,
+            l_pid: 0,
+        };
+        let result = unsafe {
+            fcntl(
+                self.chunk_file_fd.borrow().as_ref().unwrap().as_raw_fd(),
+                F_SETLKW,
+                &mut lock,
+            )
+        };
+        if result == -1 {
+            return Err(StoreError::LockError("lock_chunk error".to_string()));
+        }
+        Ok(())
+    }
+
+    fn unlock_chunk(&self) -> Result<(), StoreError> {
+        let mut lock = libc::flock {
+            l_type: libc::F_UNLCK,
+            l_whence: libc::SEEK_SET as i16,
+            l_start: *self.chunk_offset.borrow() as i64,
+            l_len: self.chunk_size as i64,
+            l_pid: 0,
+        };
+        let result = unsafe {
+            fcntl(
+                self.chunk_file_fd.borrow().as_ref().unwrap().as_raw_fd(),
+                F_SETLK,
+                &mut lock,
+            )
+        };
+        if result == -1 {
+            return Err(StoreError::LockError("unlock_chunk error".to_string()));
+        }
         Ok(())
     }
 }
@@ -565,7 +661,11 @@ pub fn dump_data_file(da_path: PathBuf) -> Result<(), StoreError> {
     Ok(())
 }
 
-pub fn dump_chunk(chunk_pool_path: PathBuf, chunk_id: u32) -> Result<(), StoreError> {
+pub fn dump_chunk(
+    chunk_pool_path: PathBuf,
+    chunk_id: u32,
+    pcap_file: Option<PathBuf>,
+) -> Result<(), StoreError> {
     let pool_file_path = chunk_pool_path.join("pool.pl");
     let pool_head = match File::open(pool_file_path) {
         Ok(mut pool_file) => PoolHead::deserialize_from(&mut pool_file)?,
@@ -602,7 +702,12 @@ pub fn dump_chunk(chunk_pool_path: PathBuf, chunk_id: u32) -> Result<(), StoreEr
             .len(pool_head.chunk_size as usize)
             .map(&data_file)?
     };
-    dump_chunk_info(chunk_id, &mmap, &pool_head)?;
+
+    if pcap_file.is_none() {
+        dump_chunk_info(chunk_id, &mmap, &pool_head)?;
+    } else {
+        dump_chunk_pcap(chunk_id, &mmap, &pool_head, pcap_file.unwrap())?;
+    }
     Ok(())
 }
 
@@ -616,12 +721,63 @@ fn dump_chunk_info(id: u32, chunk: &[u8], pool_head: &PoolHead) -> Result<(), St
         pool_head.chunk_size - head.filled_size
     );
 
+    println!("in chunk packet:");
     if head.filled_size > ChunkHead::serialize_size() as u32 {
-        println!("in chunk packet: \n");
-        let pkt_start = &chunk[ChunkHead::serialize_size()..];
-        let mut cursor = Cursor::new(pkt_start);
+        while cursor.position() < head.filled_size.into() {
+            let store_pkt = StorePacket::deserialize_from(&mut cursor)?;
+            println!("{}", store_pkt);
+        }
     } else {
-        println!("in chunk packet: None\n");
+        println!("no packet\n");
+    }
+    Ok(())
+}
+
+fn dump_chunk_pcap(
+    id: u32,
+    chunk: &[u8],
+    pool_head: &PoolHead,
+    pcap_file: PathBuf,
+) -> Result<(), StoreError> {
+    let mut cursor = Cursor::new(chunk);
+    let head = ChunkHead::deserialize_from(&mut cursor)?;
+    println!(
+        "chunk id: {:04}, {}, remain size: {} B",
+        id,
+        head,
+        pool_head.chunk_size - head.filled_size
+    );
+
+    println!("dump packet to pcap: {:?}", pcap_file);
+    if head.filled_size > ChunkHead::serialize_size() as u32 {
+        let capture = PcapCapture::dead(Linktype::ETHERNET);
+        if capture.is_err() {
+            return Err(StoreError::WriteError("pcap open error".to_string()));
+        }
+        let capture = capture.unwrap();
+        let mut savefile = capture.savefile(pcap_file).unwrap();
+        let mut pkt_num: u32 = 0;
+
+        while cursor.position() < head.filled_size.into() {
+            let store_pkt = StorePacket::deserialize_from(&mut cursor)?;
+            println!("save pkt: {}", store_pkt);
+
+            let header = CapPacketHeader {
+                ts: ts_timeval(store_pkt.timestamp),
+                caplen: store_pkt.data_len as u32,
+                len: store_pkt.data_len as u32,
+            };
+            let cap_pkt = CapPacket {
+                header: &header,
+                data: &store_pkt.data,
+            };
+            savefile.write(&cap_pkt);
+            pkt_num += 1;
+        }
+        let _ = savefile.flush();
+        println!("save packet num: {}", pkt_num);
+    } else {
+        println!("no packet\n");
     }
     Ok(())
 }

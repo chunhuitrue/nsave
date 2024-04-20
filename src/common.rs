@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use chrono::{DateTime, Local, TimeZone};
+use libc::timeval;
 
 pub const THREAD_NUM: u64 = 2;
 pub const STORE_PATH: &str = "/Users/lch/misc/nsave_data/";
@@ -15,6 +16,7 @@ pub enum StoreError {
     ReadError(String),
     WriteError(String),
     CliError(String),
+    LockError(String),
 }
 
 impl std::fmt::Display for StoreError {
@@ -26,6 +28,7 @@ impl std::fmt::Display for StoreError {
             StoreError::ReadError(msg) => write!(f, "Read error: {}", msg),
             StoreError::WriteError(msg) => write!(f, "Write error: {}", msg),
             StoreError::CliError(msg) => write!(f, "Write error: {}", msg),
+            StoreError::LockError(msg) => write!(f, "lock error: {}", msg),
         }
     }
 }
@@ -54,4 +57,13 @@ pub fn ts_date(timestamp: u128) -> DateTime<Local> {
             .expect("Failed to convert to local time")
             .naive_utc(),
     )
+}
+
+pub fn ts_timeval(timestamp: u128) -> timeval {
+    let seconds = (timestamp / 1_000_000_000) as i64;
+    let nanoseconds = (timestamp % 1_000_000_000) as i64;
+    timeval {
+        tv_sec: seconds,
+        tv_usec: (nanoseconds * 1000) as i32,
+    }
 }

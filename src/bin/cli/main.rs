@@ -40,7 +40,11 @@ fn main() -> Result<(), StoreError> {
                 sub_matches.get_one::<u32>("chunk_id"),
             ) {
                 (Some(path), Some(chunk_id)) => {
-                    dump_chunk(path.into(), *chunk_id)?;
+                    if let Some(pcap_file) = sub_matches.get_one::<String>("pcap_file") {
+                        dump_chunk(path.into(), *chunk_id, Some(pcap_file.into()))?;
+                    } else {
+                        dump_chunk(path.into(), *chunk_id, None)?;
+                    }
                 }
                 (_, _) => {
                     return Err(StoreError::CliError("path or chunk_id error".to_string()));
@@ -115,6 +119,11 @@ fn cli() -> Command {
                     arg!(-c - -chunk_id <CHUNKID>)
                         .help("dump chunk")
                         .value_parser(value_parser!(u32))
+                        .required(false),
+                )
+                .arg(
+                    arg!(-f - -pcap_file <PCAPFILE>)
+                        .help("dump to pcap file")
                         .required(false),
                 ),
         )
