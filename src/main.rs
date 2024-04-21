@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver;
 use std::sync::mpsc::TryRecvError;
 use std::sync::mpsc::{self, TrySendError};
-use std::sync::Arc;
+use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use store::*;
@@ -31,15 +31,15 @@ fn main() {
     if let Some(config_path) = matches.get_one::<PathBuf>("config") {
         println!("config file: {}", config_path.display());
     }
-    match matches
-        .get_one::<u8>("debug")
-        .expect("Count's are defaulted")
-    {
-        0 => {}
-        1 => println!("Debug mode is kind of on"),
-        2 => println!("Debug mode is on"),
-        _ => println!("Don't be crazy"),
-    }
+    // match matches
+    //     .get_one::<u8>("debug")
+    //     .expect("Count's are defaulted")
+    // {
+    //     0 => {}
+    //     1 => println!("Debug mode is kind of on"),
+    //     2 => println!("Debug mode is on"),
+    //     _ => println!("Don't be crazy"),
+    // }
 
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
@@ -48,22 +48,25 @@ fn main() {
     })
     .expect("Error setting Ctrl-C handler");
 
+    let barrier = Arc::new(Barrier::new((THREAD_NUM + 1) as usize));
     let mut statis = (0..THREAD_NUM)
         .map(|_| Statis::new())
         .collect::<Vec<Statis>>();
     let mut txs = vec![];
     let mut threads = vec![];
     for i in 0..THREAD_NUM {
+        let barrier_t = barrier.clone();
         let running_clone = running.clone();
         let (tx, rx) = mpsc::sync_channel::<Arc<Packet>>(CHANNEL_BUFF);
         let thread_hd = thread::spawn(move || {
-            writer_thread(running_clone, i, rx);
+            writer_thread(barrier_t, running_clone, i, rx);
         });
         threads.push(thread_hd);
         txs.push(tx);
     }
 
     let mut capture = Capture::init(pcap_file).unwrap();
+    barrier.wait();
     while running.load(Ordering::Relaxed) {
         let now = timenow();
         let pkt = capture.next_packet(now);
@@ -123,9 +126,13 @@ fn cli() -> Command {
         )
 }
 
-fn writer_thread(running: Arc<AtomicBool>, writer_id: u64, rx: Receiver<Arc<Packet>>) {
+fn writer_thread(
+    barrier: Arc<Barrier>,
+    running: Arc<AtomicBool>,
+    writer_id: u64,
+    rx: Receiver<Arc<Packet>>,
+) {
     let mut flow = Flow::new();
-    // let time_index = TimeIndex::new(writer_id);
     let mut now;
     let mut prev_ts = timenow();
     let mut recv_num: u64 = 0;
@@ -140,6 +147,7 @@ fn writer_thread(running: Arc<AtomicBool>, writer_id: u64, rx: Receiver<Arc<Pack
         return;
     }
 
+    barrier.wait();
     println!("writer: {:?} running...", writer_id);
     while running.load(Ordering::Relaxed) {
         match rx.try_recv() {
@@ -165,12 +173,6 @@ fn writer_thread(running: Arc<AtomicBool>, writer_id: u64, rx: Receiver<Arc<Pack
                         remove_key = Some(node.key);
 
                         let _ = store.link_fin(&node.key, node.start_time, now);
-                        // if time_index
-                        //     .save_index(&node.key, node.start_time, now)
-                        //     .is_err()
-                        // {
-                        //     println!("Failed to save index. node key{:?}", &node.key);
-                        // }
                     }
                 } else {
                     flow_err += 1;
@@ -201,15 +203,6 @@ fn writer_thread(running: Arc<AtomicBool>, writer_id: u64, rx: Receiver<Arc<Pack
                     println!("store link fin error. node key{:?}", &node.key);
                 }
             });
-            // flow.timeout(now, |node| {
-            //     if time_index
-            //         .save_index(&node.key, node.start_time, now)
-            //         .is_err()
-            //     {
-            //         println!("Failed to save index. node key{:?}", &node.key);
-            //     }
-            // });
-            // time_index.timer(now);
         }
     }
     println!(

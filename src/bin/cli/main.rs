@@ -28,11 +28,11 @@ fn main() -> Result<(), StoreError> {
     match matches.subcommand() {
         Some(("dump", sub_matches)) => {
             if let Some(pool_file) = sub_matches.get_one::<String>("pool_file") {
-                dump_pool_file(pool_file.into())?;
+                return dump_pool_file(pool_file.into());
             }
 
             if let Some(data_file) = sub_matches.get_one::<String>("data_file") {
-                dump_data_file(data_file.into())?;
+                return dump_data_file(data_file.into());
             }
 
             match (
@@ -41,17 +41,13 @@ fn main() -> Result<(), StoreError> {
             ) {
                 (Some(path), Some(chunk_id)) => {
                     if let Some(pcap_file) = sub_matches.get_one::<String>("pcap_file") {
-                        dump_chunk(path.into(), *chunk_id, Some(pcap_file.into()))?;
+                        dump_chunk(path.into(), *chunk_id, Some(pcap_file.into()))
                     } else {
-                        dump_chunk(path.into(), *chunk_id, None)?;
+                        dump_chunk(path.into(), *chunk_id, None)
                     }
                 }
-                (_, _) => {
-                    return Err(StoreError::CliError("path or chunk_id error".to_string()));
-                }
+                (_, _) => Err(StoreError::CliError("path or chunk_id error".to_string())),
             }
-
-            Ok(())
         }
         Some(("search", sub_matches)) => {
             let start_time = sub_matches.get_one::<NaiveDateTime>("start_time");

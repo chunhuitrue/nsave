@@ -3,6 +3,7 @@
 use crate::common::*;
 use crate::packet::*;
 use libc::{fcntl, F_SETLK, F_SETLKW};
+use memmap2::Mmap;
 use memmap2::{MmapMut, MmapOptions};
 use pcap::Capture as PcapCapture;
 use pcap::Linktype;
@@ -103,9 +104,21 @@ impl ChunkPool {
         let mut cursor = Cursor::new(pool_head_map.as_ref().unwrap());
         let pool_file = PoolHead::deserialize_from(&mut cursor).unwrap();
         *self.pool_head.borrow_mut() = Some(pool_file);
+        self.check_conf()?;
 
         self.next_chunk(|_, _| {})?;
         Ok(())
+    }
+
+    fn check_conf(&self) -> Result<(), StoreError> {
+        if self.pool_size == self.pool_head.borrow().as_ref().unwrap().pool_size
+            && self.file_size == self.pool_head.borrow().as_ref().unwrap().file_size
+            && self.chunk_size == self.pool_head.borrow().as_ref().unwrap().chunk_size
+        {
+            Ok(())
+        } else {
+            Err(StoreError::InitError("conf size error".to_string()))
+        }
     }
 
     pub fn write<F>(
@@ -250,7 +263,7 @@ impl ChunkPool {
         Ok(())
     }
 
-    fn flush(&self) -> Result<(), StoreError> {
+    pub fn flush(&self) -> Result<(), StoreError> {
         self.wlock_chunk()?;
         {
             let mut chunk_head_map = self.chunk_map.borrow_mut();
@@ -576,7 +589,7 @@ impl fmt::Display for StorePacket {
     }
 }
 
-pub fn dump_pool_file(path: PathBuf) -> Result<(), StoreError> {
+fn read_pool_head(path: &PathBuf) -> Result<PoolHead, StoreError> {
     match path.extension() {
         Some(ext) => {
             if !ext.to_str().unwrap().eq("pl") {
@@ -586,13 +599,46 @@ pub fn dump_pool_file(path: PathBuf) -> Result<(), StoreError> {
         None => return Err(StoreError::CliError("not pool file".to_string())),
     };
 
-    if let Ok(mut pool_file) = File::open(&path) {
-        let pool_head = PoolHead::deserialize_from(&mut pool_file)?;
-        println!("pool file {:?}:\n{}", path, pool_head);
-        return Ok(());
+    let mut fd = File::open(path)?;
+    let mut lock = libc::flock {
+        l_type: libc::F_RDLCK,
+        l_whence: libc::SEEK_SET as i16,
+        l_start: 0,
+        l_len: PoolHead::serialize_size() as i64,
+        l_pid: 0,
+    };
+    let result = unsafe { fcntl(fd.as_raw_fd(), F_SETLK, &mut lock) };
+    if result == -1 {
+        return Err(StoreError::LockError(
+            "read lock pool head error".to_string(),
+        ));
     }
-    println!("open pool file: {:?} error", path);
-    Err(StoreError::CliError("open pool file error".to_string()))
+
+    let pool_head = PoolHead::deserialize_from(&mut fd)?;
+
+    lock.l_type = libc::F_UNLCK;
+    let result = unsafe { fcntl(fd.as_raw_fd(), F_SETLK, &mut lock) };
+    if result == -1 {
+        return Err(StoreError::LockError("unlock pool head error".to_string()));
+    }
+
+    Ok(pool_head)
+}
+
+pub fn dump_pool_file(path: PathBuf) -> Result<(), StoreError> {
+    if let Ok(pool_head) = read_pool_head(&path) {
+        let actual_size = ActualSize::new(
+            pool_head.pool_size,
+            pool_head.file_size,
+            pool_head.chunk_size,
+        );
+        println!("pool file {:?}:\n{}", path, pool_head);
+        println!("actual size: {}", actual_size);
+        Ok(())
+    } else {
+        println!("open pool file: {:?} error", path);
+        Err(StoreError::CliError("open pool file error".to_string()))
+    }
 }
 
 pub fn dump_data_file(da_path: PathBuf) -> Result<(), StoreError> {
@@ -622,16 +668,13 @@ pub fn dump_data_file(da_path: PathBuf) -> Result<(), StoreError> {
     }
     let pool_path = pool_path.unwrap();
     let pool_file_path = pool_path.join("pool.pl");
-    let pool_head = match File::open(pool_file_path) {
-        Ok(mut pool_file) => PoolHead::deserialize_from(&mut pool_file)?,
-        Err(e) => return Err(StoreError::CliError(format!("open pool file error: {}", e))),
-    };
-    println!("pool head: {}", pool_head);
+    let pool_head = read_pool_head(&pool_file_path)?;
     let actual_size = ActualSize::new(
         pool_head.pool_size,
         pool_head.file_size,
         pool_head.chunk_size,
     );
+    println!("pool file {:?}:\n{}", pool_file_path, pool_head);
     println!("actual size: {}", actual_size);
 
     let data_file = match OpenOptions::new()
@@ -649,14 +692,45 @@ pub fn dump_data_file(da_path: PathBuf) -> Result<(), StoreError> {
 
     for chunk in 0..actual_size.file_chunk_num {
         let offset = chunk * pool_head.chunk_size;
-        let mmap = unsafe {
-            MmapOptions::new()
-                .offset(offset as u64)
-                .len(pool_head.chunk_size as usize)
-                .map(&data_file)?
-        };
-        let chunk_id = chunk + file_id * actual_size.file_chunk_num;
-        dump_chunk_info(chunk_id, &mmap, &pool_head)?;
+        if let Ok(mmap) = get_chunk(&data_file, offset, pool_head.chunk_size as usize) {
+            let chunk_id = chunk + file_id * actual_size.file_chunk_num;
+            dump_chunk_head(chunk_id, &mmap, &pool_head)?;
+            free_chunk(&data_file, offset, pool_head.chunk_size as usize)?;
+        } else {
+            break;
+        }
+    }
+    Ok(())
+}
+
+fn get_chunk(fd: &File, offset: u32, len: usize) -> Result<Mmap, StoreError> {
+    let mut lock = libc::flock {
+        l_type: libc::F_RDLCK,
+        l_whence: libc::SEEK_SET as i16,
+        l_start: offset as i64,
+        l_len: len as i64,
+        l_pid: 0,
+    };
+    let result = unsafe { fcntl(fd.as_raw_fd(), F_SETLK, &mut lock) };
+    if result == -1 {
+        return Err(StoreError::LockError("read lock chunk error".to_string()));
+    }
+
+    let mmap = unsafe { MmapOptions::new().offset(offset as u64).len(len).map(fd)? };
+    Ok(mmap)
+}
+
+fn free_chunk(fd: &File, offset: u32, len: usize) -> Result<(), StoreError> {
+    let mut lock = libc::flock {
+        l_type: libc::F_UNLCK,
+        l_whence: libc::SEEK_SET as i16,
+        l_start: offset as i64,
+        l_len: len as i64,
+        l_pid: 0,
+    };
+    let result = unsafe { fcntl(fd.as_raw_fd(), F_SETLK, &mut lock) };
+    if result == -1 {
+        return Err(StoreError::LockError("unlock chunk error".to_string()));
     }
     Ok(())
 }
@@ -667,16 +741,13 @@ pub fn dump_chunk(
     pcap_file: Option<PathBuf>,
 ) -> Result<(), StoreError> {
     let pool_file_path = chunk_pool_path.join("pool.pl");
-    let pool_head = match File::open(pool_file_path) {
-        Ok(mut pool_file) => PoolHead::deserialize_from(&mut pool_file)?,
-        Err(e) => return Err(StoreError::CliError(format!("open pool file error: {}", e))),
-    };
-    println!("pool head: {}", pool_head);
+    let pool_head = read_pool_head(&pool_file_path)?;
     let actual_size = ActualSize::new(
         pool_head.pool_size,
         pool_head.file_size,
         pool_head.chunk_size,
     );
+    println!("pool head: {}", pool_head);
     println!("actual size: {}", actual_size);
 
     let data_file_id = chunk_id / actual_size.file_chunk_num;
@@ -695,19 +766,27 @@ pub fn dump_chunk(
     };
 
     let inner_chunk_id = chunk_id - data_file_id * actual_size.file_chunk_num;
-    let chunk_offset = inner_chunk_id * pool_head.chunk_size;
-    let mmap = unsafe {
-        MmapOptions::new()
-            .offset(chunk_offset as u64)
-            .len(pool_head.chunk_size as usize)
-            .map(&data_file)?
-    };
-
-    if pcap_file.is_none() {
-        dump_chunk_info(chunk_id, &mmap, &pool_head)?;
-    } else {
-        dump_chunk_pcap(chunk_id, &mmap, &pool_head, pcap_file.unwrap())?;
+    let offset = inner_chunk_id * pool_head.chunk_size;
+    if let Ok(mmap) = get_chunk(&data_file, offset, pool_head.chunk_size as usize) {
+        if let Some(file) = pcap_file {
+            dump_chunk_pcap(chunk_id, &mmap, &pool_head, file)?;
+        } else {
+            dump_chunk_info(chunk_id, &mmap, &pool_head)?;
+        }
+        free_chunk(&data_file, offset, pool_head.chunk_size as usize)?;
     }
+    Ok(())
+}
+
+fn dump_chunk_head(id: u32, chunk: &[u8], pool_head: &PoolHead) -> Result<(), StoreError> {
+    let mut cursor = Cursor::new(chunk);
+    let head = ChunkHead::deserialize_from(&mut cursor)?;
+    println!(
+        "id: {:04}, {}, remain size: {} B",
+        id,
+        head,
+        pool_head.chunk_size - head.filled_size
+    );
     Ok(())
 }
 

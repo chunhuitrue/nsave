@@ -117,3 +117,9 @@ impl Store {
         Ok(())
     }
 }
+
+impl Drop for Store {
+    fn drop(&mut self) {
+        let _ = self.chunk_pool.flush();
+    }
+}
