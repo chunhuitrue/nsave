@@ -7,6 +7,7 @@ use packet::Packet;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver;
+use std::sync::mpsc::SyncSender;
 use std::sync::mpsc::TryRecvError;
 use std::sync::mpsc::{self, TrySendError};
 use std::sync::{Arc, Barrier};
@@ -14,7 +15,8 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use store::*;
 
-const CHANNEL_BUFF: usize = 2048;
+const PKT_CHANNEL_BUFF: usize = 2048;
+const MSG_CHANNEL_BUFF: usize = 1024;
 const TIMER_INTERVEL: u128 = 500_000_000; // 500毫秒
 const EMPTY_SLEEP: u64 = 5;
 
@@ -48,22 +50,32 @@ fn main() {
     })
     .expect("Error setting Ctrl-C handler");
 
-    let barrier = Arc::new(Barrier::new((THREAD_NUM + 1) as usize));
+    let barrier = Arc::new(Barrier::new((THREAD_NUM + 2) as usize));
     let mut statis = (0..THREAD_NUM)
         .map(|_| Statis::new())
         .collect::<Vec<Statis>>();
-    let mut txs = vec![];
-    let mut threads = vec![];
+    let mut msg_rxs = vec![];
+    let mut pkt_txs = vec![];
+    let mut writer_thds = vec![];
+
     for i in 0..THREAD_NUM {
-        let barrier_t = barrier.clone();
-        let running_clone = running.clone();
-        let (tx, rx) = mpsc::sync_channel::<Arc<Packet>>(CHANNEL_BUFF);
-        let thread_hd = thread::spawn(move || {
-            writer_thread(barrier_t, running_clone, i, rx);
+        let barrier_writer = barrier.clone();
+        let running_writer = running.clone();
+        let (msg_tx, msg_rx) = mpsc::sync_channel::<Msg>(MSG_CHANNEL_BUFF);
+        let (pkt_tx, pkt_rx) = mpsc::sync_channel::<Arc<Packet>>(PKT_CHANNEL_BUFF);
+        let writer_thd = thread::spawn(move || {
+            writer_thread(barrier_writer, running_writer, i, pkt_rx, msg_tx);
         });
-        threads.push(thread_hd);
-        txs.push(tx);
+        msg_rxs.push(msg_rx);
+        pkt_txs.push(pkt_tx);
+        writer_thds.push(writer_thd);
     }
+
+    let barrier_aide = barrier.clone();
+    let running_aide = running.clone();
+    let aide_thd = thread::spawn(move || {
+        aide_thread(barrier_aide, running_aide, msg_rxs);
+    });
 
     let mut capture = Capture::init(pcap_file).unwrap();
     barrier.wait();
@@ -79,7 +91,7 @@ fn main() {
         }
 
         let index = (pkt.hash_value() % THREAD_NUM) as usize;
-        match &txs[index].try_send(pkt) {
+        match &pkt_txs[index].try_send(pkt) {
             Ok(()) => {
                 statis[index].send_ok += 1;
             }
@@ -95,9 +107,10 @@ fn main() {
     }
 
     running.store(false, Ordering::Relaxed);
-    for thread_hd in threads {
-        thread_hd.join().unwrap();
+    for writer_thd in writer_thds {
+        writer_thd.join().unwrap();
     }
+    aide_thd.join().unwrap();
     for i in 0..THREAD_NUM {
         let i: usize = i.try_into().unwrap();
         println!(
@@ -130,7 +143,8 @@ fn writer_thread(
     barrier: Arc<Barrier>,
     running: Arc<AtomicBool>,
     writer_id: u64,
-    rx: Receiver<Arc<Packet>>,
+    pkt_rx: Receiver<Arc<Packet>>,
+    msg_tx: SyncSender<Msg>,
 ) {
     let mut flow = Flow::new();
     let mut now;
@@ -141,7 +155,7 @@ fn writer_thread(
     let mut data_path = PathBuf::new();
     data_path.push(STORE_PATH);
     data_path.push(format!("{:03}", writer_id));
-    let store = Store::new(data_path);
+    let store = Store::new(data_path, msg_tx);
     if let Err(e) = store.init() {
         println!("packet store init error: {}", e);
         return;
@@ -150,7 +164,7 @@ fn writer_thread(
     barrier.wait();
     println!("writer: {:?} running...", writer_id);
     while running.load(Ordering::Relaxed) {
-        match rx.try_recv() {
+        match pkt_rx.try_recv() {
             Ok(pkt) => {
                 recv_num += 1;
                 now = pkt.timestamp;
@@ -209,6 +223,15 @@ fn writer_thread(
         "writer: {:?} exit. recv pkt: {}, flow_err: {}",
         writer_id, recv_num, flow_err
     );
+}
+
+fn aide_thread(barrier: Arc<Barrier>, running: Arc<AtomicBool>, _msg_rxs: Vec<Receiver<Msg>>) {
+    barrier.wait();
+    println!("aide thread running...");
+    while running.load(Ordering::Relaxed) {
+        thread::sleep(Duration::from_millis(1000));
+    }
+    println!("aide thread end...");
 }
 
 struct Statis {

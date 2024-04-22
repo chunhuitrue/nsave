@@ -5,6 +5,7 @@ use crate::common::*;
 use crate::packet::*;
 use chrono::{Datelike, Timelike};
 use std::fs;
+use std::sync::mpsc::SyncSender;
 use std::{cell::RefCell, path::PathBuf, sync::Arc};
 
 const POOL_SIZE: u64 = 1024 * 1024 * 4; // 4M
@@ -36,15 +37,17 @@ pub struct Store {
     current_dir: RefCell<Option<PathBuf>>,
     current_scale: RefCell<u32>,
     chunk_pool: ChunkPool,
+    msg_channel: SyncSender<Msg>,
 }
 
 impl Store {
-    pub fn new(store_dir: PathBuf) -> Self {
+    pub fn new(store_dir: PathBuf, msg_channel: SyncSender<Msg>) -> Self {
         Store {
             store_dir: store_dir.clone(),
             current_dir: RefCell::new(None),
             current_scale: RefCell::new(0),
             chunk_pool: ChunkPool::new(store_dir, POOL_SIZE, FILE_SIZE, CHUNK_SIZE),
+            msg_channel,
         }
     }
 

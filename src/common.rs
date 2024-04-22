@@ -47,6 +47,9 @@ impl From<String> for StoreError {
     }
 }
 
+#[derive(Debug)]
+pub struct Msg {}
+
 pub fn ts_date(timestamp: u128) -> DateTime<Local> {
     let naive_datetime = DateTime::from_timestamp(
         (timestamp / 1_000_000_000).try_into().unwrap(),
