@@ -61,9 +61,10 @@ impl Store {
             self.mk_time_scale_dir(now)?;
         }
 
-        let pkt_offset = self
-            .chunk_pool
-            .write(pkt, now, |_start_time, _end_time| {})?; // todo 清除时间索引目录
+        let pkt_offset = self.chunk_pool.write(pkt, now, |start_time, end_time| {
+            let msg = Msg::CoverChunk(start_time, end_time);
+            let _ = self.msg_channel.try_send(msg);
+        })?;
         if ctx.prev_pkt_offset.borrow().chunk_id == pkt_offset.chunk_id {
             self.chunk_pool
                 .update(&ctx.prev_pkt_offset.borrow(), &pkt_offset)?;

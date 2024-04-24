@@ -48,7 +48,9 @@ impl From<String> for StoreError {
 }
 
 #[derive(Debug)]
-pub struct Msg {}
+pub enum Msg {
+    CoverChunk(u128, u128),
+}
 
 pub fn ts_date(timestamp: u128) -> DateTime<Local> {
     let naive_datetime = DateTime::from_timestamp(
