@@ -2,6 +2,7 @@
 
 use chrono::{DateTime, Local, TimeZone};
 use libc::timeval;
+use std::path::PathBuf;
 
 pub const THREAD_NUM: u64 = 2;
 pub const STORE_PATH: &str = "/Users/lch/misc/nsave_data/";
@@ -49,7 +50,7 @@ impl From<String> for StoreError {
 
 #[derive(Debug)]
 pub enum Msg {
-    CoverChunk(u128, u128),
+    CoverChunk(PathBuf, u128, u128),
 }
 
 pub fn ts_date(timestamp: u128) -> DateTime<Local> {

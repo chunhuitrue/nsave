@@ -106,7 +106,7 @@ impl ChunkPool {
         *self.pool_head.borrow_mut() = Some(pool_file);
         self.check_conf()?;
 
-        self.next_chunk(|_, _| {})?;
+        self.next_chunk(|_, _, _| {})?;
         Ok(())
     }
 
@@ -128,7 +128,7 @@ impl ChunkPool {
         cover_chunk_fn: F,
     ) -> Result<ChunkOffset, StoreError>
     where
-        F: Fn(u128, u128),
+        F: Fn(PathBuf, u128, u128),
     {
         if self.chunk_head.borrow().as_ref().unwrap().start_time == 0 {
             self.chunk_head.borrow_mut().as_mut().unwrap().start_time = now;
@@ -209,7 +209,7 @@ impl ChunkPool {
 
     fn next_chunk<F>(&self, cover_chunk_fn: F) -> Result<(), StoreError>
     where
-        F: Fn(u128, u128),
+        F: Fn(PathBuf, u128, u128),
     {
         let chunk_id = self.pool_head.borrow().as_ref().unwrap().next_chunk_id;
         let file_id = chunk_id / self.file_chunk_num;
@@ -253,7 +253,11 @@ impl ChunkPool {
         let chunk_map = self.chunk_map.borrow_mut();
         let mut cursor = Cursor::new(chunk_map.as_ref().unwrap());
         let old_chunk_head = ChunkHead::deserialize_from(&mut cursor)?;
-        cover_chunk_fn(old_chunk_head.start_time, old_chunk_head.end_time);
+        cover_chunk_fn(
+            self.pool_path.clone(),
+            old_chunk_head.start_time,
+            old_chunk_head.end_time,
+        );
 
         *self.chunk_head.borrow_mut() = Some(ChunkHead::new());
         self.pool_head.borrow_mut().as_mut().unwrap().next_chunk_id += 1;

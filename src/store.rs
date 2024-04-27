@@ -6,7 +6,7 @@ use crate::packet::*;
 use chrono::{Datelike, Timelike};
 use std::fs;
 use std::sync::mpsc::SyncSender;
-use std::{cell::RefCell, path::PathBuf, sync::Arc};
+use std::{cell::RefCell, path::Path, path::PathBuf, sync::Arc};
 
 const POOL_SIZE: u64 = 1024 * 1024 * 4; // 4M
 const FILE_SIZE: u64 = 1024 * 1024; // 1M
@@ -61,10 +61,12 @@ impl Store {
             self.mk_time_scale_dir(now)?;
         }
 
-        let pkt_offset = self.chunk_pool.write(pkt, now, |start_time, end_time| {
-            let msg = Msg::CoverChunk(start_time, end_time);
-            let _ = self.msg_channel.try_send(msg);
-        })?;
+        let pkt_offset = self
+            .chunk_pool
+            .write(pkt, now, |pool_path, start_time, end_time| {
+                let msg = Msg::CoverChunk(pool_path, start_time, end_time);
+                let _ = self.msg_channel.try_send(msg);
+            })?;
         if ctx.prev_pkt_offset.borrow().chunk_id == pkt_offset.chunk_id {
             self.chunk_pool
                 .update(&ctx.prev_pkt_offset.borrow(), &pkt_offset)?;
@@ -126,4 +128,43 @@ impl Drop for Store {
     fn drop(&mut self) {
         let _ = self.chunk_pool.flush();
     }
+}
+
+pub fn clean_index_dir(pool_path: PathBuf, start_time: u128, end_time: u128) {
+    let start_date = ts_date(start_time);
+    let end_date = ts_date(end_time);
+
+    if start_date.year() < end_date.year() {
+        clean_year_dir(&pool_path, start_date.year(), end_date.year());
+    }
+    if start_date.month() < end_date.month() {
+        clean_month_dir(&pool_path, start_date.month(), end_date.month());
+    }
+    if start_date.day() < end_date.day() {
+        clean_day_dir(&pool_path, start_date.day(), end_date.day());
+    }
+    if start_date.hour() < end_date.hour() {
+        clean_hour_dir(&pool_path, start_date.hour(), end_date.hour());
+    }
+    clean_minute_dir(&pool_path, end_date.minute());
+}
+
+fn clean_year_dir(_pool_path: &Path, _start_year: i32, _end_year: i32) {
+    todo!()
+}
+
+fn clean_month_dir(_pool_path: &Path, _start_month: u32, _end_month: u32) {
+    todo!()
+}
+
+fn clean_day_dir(_pool_path: &Path, _start_day: u32, _end_day: u32) {
+    todo!()
+}
+
+fn clean_hour_dir(_pool_path: &Path, _start_hour: u32, _end_hour: u32) {
+    todo!()
+}
+
+fn clean_minute_dir(_pool_path: &Path, _minute: u32) {
+    todo!()
 }

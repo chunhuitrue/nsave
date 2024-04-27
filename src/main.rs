@@ -1,7 +1,8 @@
 use capture::*;
 use clap::{arg, value_parser, Command};
-use common::*;
 use flow::*;
+use libnsave::common::*;
+use libnsave::store::clean_index_dir;
 use libnsave::*;
 use packet::Packet;
 use std::path::PathBuf;
@@ -18,7 +19,8 @@ use store::*;
 const PKT_CHANNEL_BUFF: usize = 2048;
 const MSG_CHANNEL_BUFF: usize = 1024;
 const TIMER_INTERVEL: u128 = 500_000_000; // 500毫秒
-const EMPTY_SLEEP: u64 = 5;
+const WRITER_EMPTY_SLEEP: u64 = 5;
+const AIDE_EMPTY_SLEEP: u64 = 100;
 
 fn main() {
     let pcap_file;
@@ -197,11 +199,11 @@ fn writer_thread(
                 }
             }
             Err(TryRecvError::Empty) => {
-                thread::sleep(Duration::from_millis(EMPTY_SLEEP));
+                thread::sleep(Duration::from_millis(WRITER_EMPTY_SLEEP));
                 now = timenow();
             }
             Err(TryRecvError::Disconnected) => {
-                println!("writer: {:?} recv desconnected", writer_id);
+                println!("writer_thread: {:?} recv desconnected", writer_id);
                 break;
             }
         }
@@ -225,11 +227,24 @@ fn writer_thread(
     );
 }
 
-fn aide_thread(barrier: Arc<Barrier>, running: Arc<AtomicBool>, _msg_rxs: Vec<Receiver<Msg>>) {
+fn aide_thread(barrier: Arc<Barrier>, running: Arc<AtomicBool>, msg_rxs: Vec<Receiver<Msg>>) {
     barrier.wait();
     println!("aide thread running...");
     while running.load(Ordering::Relaxed) {
-        thread::sleep(Duration::from_millis(1000));
+        for msg_rx in msg_rxs.iter() {
+            match msg_rx.try_recv() {
+                Ok(Msg::CoverChunk(pool_path, start_time, end_time)) => {
+                    clean_index_dir(pool_path, start_time, end_time)
+                }
+                Err(TryRecvError::Empty) => {
+                    thread::sleep(Duration::from_millis(AIDE_EMPTY_SLEEP));
+                }
+                Err(TryRecvError::Disconnected) => {
+                    println!("aide_thread: {:?} recv desconnected", msg_rx);
+                    return;
+                }
+            }
+        }
     }
     println!("aide thread end...");
 }
