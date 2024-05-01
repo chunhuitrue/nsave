@@ -8,8 +8,8 @@ use std::fs;
 use std::sync::mpsc::SyncSender;
 use std::{cell::RefCell, path::Path, path::PathBuf, sync::Arc};
 
-const POOL_SIZE: u64 = 1024 * 1024 * 4; // 4M
-const FILE_SIZE: u64 = 1024 * 1024; // 1M
+const POOL_SIZE: u64 = 1024 * 1024 * 16; // 16M
+const FILE_SIZE: u64 = 1024 * 1024 * 2; // 2M
 const CHUNK_SIZE: u32 = 1024 * 80; // 80k
 
 #[derive(Debug)]
@@ -117,6 +117,7 @@ impl Store {
         if !path.exists() && fs::create_dir_all(&path).is_err() {
             return Err(StoreError::WriteError("create dir error".to_string()));
         }
+        println!("make scale dir: {:?}", path);
 
         *self.current_dir.borrow_mut() = Some(path);
         *self.current_scale.borrow_mut() = scale;
@@ -130,16 +131,21 @@ impl Drop for Store {
     }
 }
 
-pub fn clean_index_dir(pool_path: PathBuf, end_date: DateTime<Local>) {
-    clean_minute_dir(&pool_path, end_date);
-    clean_hour_dir(&pool_path, end_date);
-    clean_day_dir(&pool_path, end_date);
-    clean_month_dir(&pool_path, end_date);
-    clean_year_dir(&pool_path, end_date);
+pub fn clean_index_dir(pool_path: PathBuf, end_date: DateTime<Local>) -> Result<(), StoreError> {
+    let now_date = ts_date(timenow());
+    if now_date.minute() == end_date.minute() {
+        return Ok(());
+    }
+
+    clean_minute_dir(&pool_path, end_date)?;
+    clean_hour_dir(&pool_path, end_date)?;
+    clean_day_dir(&pool_path, end_date)?;
+    clean_month_dir(&pool_path, end_date)?;
+    clean_year_dir(&pool_path, end_date)?;
+    Ok(())
 }
 
-// pool_path = "/Users/lch/misc/nsave_data/000/chunk_pool"
-fn clean_minute_dir(pool_path: &Path, end_date: DateTime<Local>) {
+fn clean_minute_dir(pool_path: &Path, end_date: DateTime<Local>) -> Result<(), StoreError> {
     for minute in (0..=end_date.minute()).rev() {
         let mut path = PathBuf::new();
         path.push(pool_path);
@@ -150,23 +156,117 @@ fn clean_minute_dir(pool_path: &Path, end_date: DateTime<Local>) {
         path.push(format!("{:02}", end_date.hour()));
         path.push(format!("{:02}", minute));
         if path.exists() {
-            let _ = fs::remove_dir_all(path);
+            println!("minute path: {:?}", path);
+            fs::remove_dir_all(path)?;
         }
     }
+    Ok(())
 }
 
-fn clean_hour_dir(_pool_path: &Path, _end_date: DateTime<Local>) {
-    todo!()
+fn clean_hour_dir(pool_path: &Path, end_date: DateTime<Local>) -> Result<(), StoreError> {
+    let mut path = PathBuf::new();
+    path.push(pool_path);
+    path.pop();
+    path.push(format!("{:04}", end_date.year()));
+    path.push(format!("{:02}", end_date.month()));
+    path.push(format!("{:02}", end_date.day()));
+    path.push(format!("{:02}", end_date.hour()));
+    if is_empty_dir(&path) {
+        println!("hour path: {:?}", path);
+        fs::remove_dir_all(path)?;
+    }
+
+    for hour in (0..end_date.hour()).rev() {
+        let mut path = PathBuf::new();
+        path.push(pool_path);
+        path.pop();
+        path.push(format!("{:04}", end_date.year()));
+        path.push(format!("{:02}", end_date.month()));
+        path.push(format!("{:02}", end_date.day()));
+        path.push(format!("{:02}", hour));
+        if path.exists() {
+            println!("hour before path: {:?}", path);
+            fs::remove_dir_all(path)?;
+        }
+    }
+    Ok(())
 }
 
-fn clean_day_dir(_pool_path: &Path, _end_date: DateTime<Local>) {
-    todo!()
+fn clean_day_dir(pool_path: &Path, end_date: DateTime<Local>) -> Result<(), StoreError> {
+    let mut path = PathBuf::new();
+    path.push(pool_path);
+    path.pop();
+    path.push(format!("{:04}", end_date.year()));
+    path.push(format!("{:02}", end_date.month()));
+    path.push(format!("{:02}", end_date.day()));
+    if is_empty_dir(&path) {
+        println!("day path: {:?}", path);
+        fs::remove_dir_all(path)?;
+    }
+
+    for day in (1..end_date.day()).rev() {
+        let mut path = PathBuf::new();
+        path.push(pool_path);
+        path.pop();
+        path.push(format!("{:04}", end_date.year()));
+        path.push(format!("{:02}", end_date.month()));
+        path.push(format!("{:02}", day));
+        if path.exists() {
+            println!("day before path: {:?}", path);
+            fs::remove_dir_all(path)?;
+        }
+    }
+    Ok(())
 }
 
-fn clean_month_dir(_pool_path: &Path, _end_date: DateTime<Local>) {
-    todo!()
+fn clean_month_dir(pool_path: &Path, end_date: DateTime<Local>) -> Result<(), StoreError> {
+    let mut path = PathBuf::new();
+    path.push(pool_path);
+    path.pop();
+    path.push(format!("{:04}", end_date.year()));
+    path.push(format!("{:02}", end_date.month()));
+    if is_empty_dir(&path) {
+        println!("moutn path: {:?}", path);
+        fs::remove_dir_all(path)?;
+    }
+
+    for month in (1..end_date.month()).rev() {
+        let mut path = PathBuf::new();
+        path.push(pool_path);
+        path.pop();
+        path.push(format!("{:04}", end_date.year()));
+        path.push(format!("{:02}", month));
+        if path.exists() {
+            println!("month before path: {:?}", path);
+            fs::remove_dir_all(path)?;
+        }
+    }
+    Ok(())
 }
 
-fn clean_year_dir(_pool_path: &Path, _end_date: DateTime<Local>) {
-    todo!()
+fn clean_year_dir(pool_path: &Path, end_date: DateTime<Local>) -> Result<(), StoreError> {
+    let mut path = PathBuf::new();
+    path.push(pool_path);
+    path.pop();
+    path.push(format!("{:04}", end_date.year()));
+    if is_empty_dir(&path) {
+        fs::remove_dir_all(path)?;
+    }
+
+    let mut path = PathBuf::new();
+    path.push(pool_path);
+    path.pop();
+    path.push(format!("{:04}", end_date.year() - 1));
+    if path.exists() {
+        fs::remove_dir_all(path)?;
+    }
+    Ok(())
+}
+
+fn is_empty_dir(dir_path: &Path) -> bool {
+    let mut entries = match fs::read_dir(dir_path) {
+        Ok(entries) => entries,
+        Err(_) => return false, // 如果读取目录失败，可能是因为没有权限等原因，不视为空
+    };
+    entries.next().is_none()
 }

@@ -3,6 +3,7 @@
 use chrono::{DateTime, Local, TimeZone};
 use libc::timeval;
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const THREAD_NUM: u64 = 2;
 pub const STORE_PATH: &str = "/Users/lch/misc/nsave_data/";
@@ -72,4 +73,11 @@ pub fn ts_timeval(timestamp: u128) -> timeval {
         tv_sec: seconds,
         tv_usec: (nanoseconds * 1000) as i32,
     }
+}
+
+pub fn timenow() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos()
 }

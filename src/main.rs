@@ -13,7 +13,7 @@ use std::sync::mpsc::TryRecvError;
 use std::sync::mpsc::{self, TrySendError};
 use std::sync::{Arc, Barrier};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 use store::*;
 
 const PKT_CHANNEL_BUFF: usize = 2048;
@@ -234,7 +234,7 @@ fn aide_thread(barrier: Arc<Barrier>, running: Arc<AtomicBool>, msg_rxs: Vec<Rec
         for msg_rx in msg_rxs.iter() {
             match msg_rx.try_recv() {
                 Ok(Msg::CoverChunk(pool_path, _start_time, end_time)) => {
-                    clean_index_dir(pool_path, ts_date(end_time))
+                    let _ = clean_index_dir(pool_path, ts_date(end_time));
                 }
                 Err(TryRecvError::Empty) => {
                     thread::sleep(Duration::from_millis(AIDE_EMPTY_SLEEP));
@@ -261,11 +261,4 @@ impl Statis {
             send_err: 0,
         }
     }
-}
-
-fn timenow() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos()
 }
