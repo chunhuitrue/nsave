@@ -233,8 +233,8 @@ fn aide_thread(barrier: Arc<Barrier>, running: Arc<AtomicBool>, msg_rxs: Vec<Rec
     while running.load(Ordering::Relaxed) {
         for msg_rx in msg_rxs.iter() {
             match msg_rx.try_recv() {
-                Ok(Msg::CoverChunk(pool_path, start_time, end_time)) => {
-                    clean_index_dir(pool_path, start_time, end_time)
+                Ok(Msg::CoverChunk(pool_path, _start_time, end_time)) => {
+                    clean_index_dir(pool_path, ts_date(end_time))
                 }
                 Err(TryRecvError::Empty) => {
                     thread::sleep(Duration::from_millis(AIDE_EMPTY_SLEEP));

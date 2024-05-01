@@ -3,7 +3,7 @@
 use crate::chunkpool::*;
 use crate::common::*;
 use crate::packet::*;
-use chrono::{Datelike, Timelike};
+use chrono::{DateTime, Datelike, Local, Timelike};
 use std::fs;
 use std::sync::mpsc::SyncSender;
 use std::{cell::RefCell, path::Path, path::PathBuf, sync::Arc};
@@ -130,41 +130,43 @@ impl Drop for Store {
     }
 }
 
-pub fn clean_index_dir(pool_path: PathBuf, start_time: u128, end_time: u128) {
-    let start_date = ts_date(start_time);
-    let end_date = ts_date(end_time);
-
-    if start_date.year() < end_date.year() {
-        clean_year_dir(&pool_path, start_date.year(), end_date.year());
-    }
-    if start_date.month() < end_date.month() {
-        clean_month_dir(&pool_path, start_date.month(), end_date.month());
-    }
-    if start_date.day() < end_date.day() {
-        clean_day_dir(&pool_path, start_date.day(), end_date.day());
-    }
-    if start_date.hour() < end_date.hour() {
-        clean_hour_dir(&pool_path, start_date.hour(), end_date.hour());
-    }
-    clean_minute_dir(&pool_path, end_date.minute());
+pub fn clean_index_dir(pool_path: PathBuf, end_date: DateTime<Local>) {
+    clean_minute_dir(&pool_path, end_date);
+    clean_hour_dir(&pool_path, end_date);
+    clean_day_dir(&pool_path, end_date);
+    clean_month_dir(&pool_path, end_date);
+    clean_year_dir(&pool_path, end_date);
 }
 
-fn clean_year_dir(_pool_path: &Path, _start_year: i32, _end_year: i32) {
+// pool_path = "/Users/lch/misc/nsave_data/000/chunk_pool"
+fn clean_minute_dir(pool_path: &Path, end_date: DateTime<Local>) {
+    for minute in (0..=end_date.minute()).rev() {
+        let mut path = PathBuf::new();
+        path.push(pool_path);
+        path.pop();
+        path.push(format!("{:04}", end_date.year()));
+        path.push(format!("{:02}", end_date.month()));
+        path.push(format!("{:02}", end_date.day()));
+        path.push(format!("{:02}", end_date.hour()));
+        path.push(format!("{:02}", minute));
+        if path.exists() {
+            let _ = fs::remove_dir_all(path);
+        }
+    }
+}
+
+fn clean_hour_dir(_pool_path: &Path, _end_date: DateTime<Local>) {
     todo!()
 }
 
-fn clean_month_dir(_pool_path: &Path, _start_month: u32, _end_month: u32) {
+fn clean_day_dir(_pool_path: &Path, _end_date: DateTime<Local>) {
     todo!()
 }
 
-fn clean_day_dir(_pool_path: &Path, _start_day: u32, _end_day: u32) {
+fn clean_month_dir(_pool_path: &Path, _end_date: DateTime<Local>) {
     todo!()
 }
 
-fn clean_hour_dir(_pool_path: &Path, _start_hour: u32, _end_hour: u32) {
-    todo!()
-}
-
-fn clean_minute_dir(_pool_path: &Path, _minute: u32) {
+fn clean_year_dir(_pool_path: &Path, _end_date: DateTime<Local>) {
     todo!()
 }
