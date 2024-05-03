@@ -1,10 +1,8 @@
-#![allow(dead_code)]
-
 use crate::common::*;
 use crate::packet::*;
+use chrono::{DateTime, Datelike, Local, Timelike};
 use libc::{fcntl, F_SETLK, F_SETLKW};
-use memmap2::Mmap;
-use memmap2::{MmapMut, MmapOptions};
+use memmap2::{Mmap, MmapMut, MmapOptions};
 use pcap::Capture as PcapCapture;
 use pcap::Linktype;
 use pcap::Packet as CapPacket;
@@ -36,6 +34,8 @@ pub struct ChunkPool {
     chunk_offset: RefCell<u32>,
     chunk_map: RefCell<Option<MmapMut>>,
     chunk_head: RefCell<Option<ChunkHead>>,
+
+    last_cover_minute: RefCell<DateTime<Local>>,
 }
 
 impl ChunkPool {
@@ -64,6 +64,8 @@ impl ChunkPool {
             chunk_offset: RefCell::new(0),
             chunk_map: RefCell::new(None),
             chunk_head: RefCell::new(None),
+
+            last_cover_minute: RefCell::new(ts_date(0)),
         }
     }
 
@@ -106,7 +108,7 @@ impl ChunkPool {
         *self.pool_head.borrow_mut() = Some(pool_file);
         self.check_conf()?;
 
-        self.next_chunk(|_, _, _| {})?;
+        self.next_chunk(|_, _| {})?;
         Ok(())
     }
 
@@ -128,7 +130,7 @@ impl ChunkPool {
         cover_chunk_fn: F,
     ) -> Result<ChunkOffset, StoreError>
     where
-        F: Fn(PathBuf, u128, u128),
+        F: Fn(PathBuf, u128),
     {
         if self.chunk_head.borrow().as_ref().unwrap().start_time == 0 {
             self.chunk_head.borrow_mut().as_mut().unwrap().start_time = now;
@@ -209,7 +211,7 @@ impl ChunkPool {
 
     fn next_chunk<F>(&self, cover_chunk_fn: F) -> Result<(), StoreError>
     where
-        F: Fn(PathBuf, u128, u128),
+        F: Fn(PathBuf, u128),
     {
         let chunk_id = self.pool_head.borrow().as_ref().unwrap().next_chunk_id;
         let file_id = chunk_id / self.file_chunk_num;
@@ -253,11 +255,17 @@ impl ChunkPool {
         let chunk_map = self.chunk_map.borrow_mut();
         let mut cursor = Cursor::new(chunk_map.as_ref().unwrap());
         let old_chunk_head = ChunkHead::deserialize_from(&mut cursor)?;
-        cover_chunk_fn(
-            self.pool_path.clone(),
-            old_chunk_head.start_time,
-            old_chunk_head.end_time,
-        );
+        let cover_minute = ts_date(old_chunk_head.end_time);
+        let last_minute = *self.last_cover_minute.borrow();
+        if !(cover_minute.year() == last_minute.year()
+            && cover_minute.month() == last_minute.month()
+            && cover_minute.day() == last_minute.day()
+            && cover_minute.hour() == last_minute.hour()
+            && cover_minute.minute() == last_minute.minute())
+        {
+            *self.last_cover_minute.borrow_mut() = cover_minute;
+            cover_chunk_fn(self.pool_path.clone(), old_chunk_head.end_time);
+        }
 
         *self.chunk_head.borrow_mut() = Some(ChunkHead::new());
         self.pool_head.borrow_mut().as_mut().unwrap().next_chunk_id += 1;
@@ -378,6 +386,12 @@ impl ChunkPool {
             return Err(StoreError::LockError("unlock_chunk error".to_string()));
         }
         Ok(())
+    }
+}
+
+impl Drop for ChunkPool {
+    fn drop(&mut self) {
+        let _ = self.flush();
     }
 }
 

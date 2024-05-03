@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use crate::packet::{Packet, PacketKey, TransProto};
 use crate::store::*;
 use etherparse::IpHeader;

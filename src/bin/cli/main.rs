@@ -1,5 +1,3 @@
-// #![allow(dead_code)]
-
 use chrono::NaiveDateTime;
 use clap::{arg, value_parser, Command};
 use libnsave::chunkpool::*;

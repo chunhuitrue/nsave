@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use chrono::{DateTime, Local, TimeZone};
 use libc::timeval;
 use std::path::PathBuf;
@@ -8,7 +6,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub const THREAD_NUM: u64 = 2;
 pub const STORE_PATH: &str = "/Users/lch/misc/nsave_data/";
 pub const MINUTE_NS: u128 = 1_000_000_000 * 60; // 一分钟
-pub const TIME_SCALE: u32 = 20; // 20秒
 
 #[derive(Debug)]
 pub enum StoreError {
@@ -51,7 +48,7 @@ impl From<String> for StoreError {
 
 #[derive(Debug)]
 pub enum Msg {
-    CoverChunk(PathBuf, u128, u128),
+    CoverChunk(PathBuf, u128),
 }
 
 pub fn ts_date(timestamp: u128) -> DateTime<Local> {

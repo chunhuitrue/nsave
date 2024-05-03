@@ -1,8 +1,7 @@
 use capture::*;
 use clap::{arg, value_parser, Command};
+use common::*;
 use flow::*;
-use libnsave::common::*;
-use libnsave::store::clean_index_dir;
 use libnsave::*;
 use packet::Packet;
 use std::path::PathBuf;
@@ -14,6 +13,7 @@ use std::sync::mpsc::{self, TrySendError};
 use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::Duration;
+use store::clean_index_dir;
 use store::*;
 
 const PKT_CHANNEL_BUFF: usize = 2048;
@@ -105,7 +105,7 @@ fn main() {
             }
         }
 
-        // thread::sleep(Duration::from_millis(100)); // todo: del.调试用
+        thread::sleep(Duration::from_millis(1)); // todo: del.调试用
     }
 
     running.store(false, Ordering::Relaxed);
@@ -233,7 +233,7 @@ fn aide_thread(barrier: Arc<Barrier>, running: Arc<AtomicBool>, msg_rxs: Vec<Rec
     while running.load(Ordering::Relaxed) {
         for msg_rx in msg_rxs.iter() {
             match msg_rx.try_recv() {
-                Ok(Msg::CoverChunk(pool_path, _start_time, end_time)) => {
+                Ok(Msg::CoverChunk(pool_path, end_time)) => {
                     let _ = clean_index_dir(pool_path, ts_date(end_time));
                 }
                 Err(TryRecvError::Empty) => {

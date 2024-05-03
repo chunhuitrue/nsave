@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use crate::common::*;
 use etherparse::{Ethernet2Header, IpHeader, PacketHeaders, TransportHeader, VlanHeader};
 use serde::{Deserialize, Serialize};

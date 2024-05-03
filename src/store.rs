@@ -1,5 +1,4 @@
-#![allow(dead_code)]
-
+use crate::chunkindex::*;
 use crate::chunkpool::*;
 use crate::common::*;
 use crate::packet::*;
@@ -35,9 +34,10 @@ impl Default for StoreCtx {
 pub struct Store {
     store_dir: PathBuf,
     current_dir: RefCell<Option<PathBuf>>,
-    current_scale: RefCell<u32>,
+    current_dir_date: RefCell<DateTime<Local>>,
     chunk_pool: ChunkPool,
     msg_channel: SyncSender<Msg>,
+    chunk_index: ChunkIndex,
 }
 
 impl Store {
@@ -45,9 +45,10 @@ impl Store {
         Store {
             store_dir: store_dir.clone(),
             current_dir: RefCell::new(None),
-            current_scale: RefCell::new(0),
+            current_dir_date: RefCell::new(ts_date(0)),
             chunk_pool: ChunkPool::new(store_dir, POOL_SIZE, FILE_SIZE, CHUNK_SIZE),
             msg_channel,
+            chunk_index: ChunkIndex::new(),
         }
     }
 
@@ -58,20 +59,22 @@ impl Store {
 
     pub fn store(&self, ctx: &StoreCtx, pkt: Arc<Packet>, now: u128) -> Result<(), StoreError> {
         if self.current_dir.borrow().is_none() {
-            self.mk_time_scale_dir(now)?;
+            self.mk_time_dir(now)?;
+            self.chunk_index
+                .init_time_dir(self.current_dir.borrow().as_ref().unwrap())?;
         }
 
-        let pkt_offset = self
-            .chunk_pool
-            .write(pkt, now, |pool_path, start_time, end_time| {
-                let msg = Msg::CoverChunk(pool_path, start_time, end_time);
-                let _ = self.msg_channel.try_send(msg);
-            })?;
+        let pkt_offset = self.chunk_pool.write(pkt, now, |pool_path, end_time| {
+            let msg = Msg::CoverChunk(pool_path, end_time);
+            let _ = self.msg_channel.try_send(msg);
+        })?;
         if ctx.prev_pkt_offset.borrow().chunk_id == pkt_offset.chunk_id {
             self.chunk_pool
                 .update(&ctx.prev_pkt_offset.borrow(), &pkt_offset)?;
         }
         *ctx.prev_pkt_offset.borrow_mut() = pkt_offset;
+
+        self.chunk_index.write()?;
         Ok(())
     }
 
@@ -89,22 +92,27 @@ impl Store {
             return Ok(());
         }
 
-        let now_scale = ts_date(now).second() / TIME_SCALE;
-        if now_scale != *self.current_scale.borrow() {
-            self.time_scale_change(now)?;
+        let date_now = ts_date(now);
+        let cur_dir_date = *self.current_dir_date.borrow();
+        if !(date_now.year() == cur_dir_date.year()
+            && date_now.month() == cur_dir_date.month()
+            && date_now.day() == cur_dir_date.day()
+            && date_now.hour() == cur_dir_date.hour()
+            && date_now.minute() == cur_dir_date.minute())
+        {
+            self.change_dir(now)?;
             *self.current_dir.borrow_mut() = None;
         }
         Ok(())
     }
 
-    fn time_scale_change(&self, _now: u128) -> Result<(), StoreError> {
-        dbg!("flush data index to disk ...");
+    fn change_dir(&self, _now: u128) -> Result<(), StoreError> {
+        self.chunk_index.change_time_dir()?;
         Ok(())
     }
 
-    fn mk_time_scale_dir(&self, timestamp: u128) -> Result<(), StoreError> {
+    fn mk_time_dir(&self, timestamp: u128) -> Result<(), StoreError> {
         let date = ts_date(timestamp);
-        let scale = date.second() / TIME_SCALE;
         let mut path = PathBuf::new();
         path.push(&self.store_dir);
         path.push(format!("{:04}", date.year()));
@@ -112,22 +120,14 @@ impl Store {
         path.push(format!("{:02}", date.day()));
         path.push(format!("{:02}", date.hour()));
         path.push(format!("{:02}", date.minute()));
-        path.push(format!("{:02}", scale));
 
         if !path.exists() && fs::create_dir_all(&path).is_err() {
             return Err(StoreError::WriteError("create dir error".to_string()));
         }
-        println!("make scale dir: {:?}", path);
 
         *self.current_dir.borrow_mut() = Some(path);
-        *self.current_scale.borrow_mut() = scale;
+        *self.current_dir_date.borrow_mut() = date;
         Ok(())
-    }
-}
-
-impl Drop for Store {
-    fn drop(&mut self) {
-        let _ = self.chunk_pool.flush();
     }
 }
 
