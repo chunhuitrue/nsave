@@ -1,6 +1,7 @@
 use crate::chunkindex::*;
 use crate::chunkpool::*;
 use crate::common::*;
+use crate::flow::FlowNode;
 use crate::packet::*;
 use chrono::{DateTime, Datelike, Local, Timelike};
 use std::fs;
@@ -14,12 +15,16 @@ const CHUNK_SIZE: u32 = 1024 * 80; // 80k
 #[derive(Debug)]
 pub struct StoreCtx {
     prev_pkt_offset: RefCell<ChunkOffset>,
+    flow_key: RefCell<Option<PacketKey>>,
+    chunk_id: RefCell<Option<u32>>,
 }
 
 impl StoreCtx {
     pub fn new() -> Self {
         StoreCtx {
             prev_pkt_offset: RefCell::new(ChunkOffset::new()),
+            flow_key: RefCell::new(None),
+            chunk_id: RefCell::new(None),
         }
     }
 }
@@ -57,13 +62,19 @@ impl Store {
         Ok(())
     }
 
-    pub fn store(&self, ctx: &StoreCtx, pkt: Arc<Packet>, now: u128) -> Result<(), StoreError> {
+    pub fn store(
+        &self,
+        flow_node: &FlowNode,
+        pkt: Arc<Packet>,
+        now: u128,
+    ) -> Result<(), StoreError> {
         if self.current_dir.borrow().is_none() {
             self.mk_time_dir(now)?;
             self.chunk_index
                 .init_time_dir(self.current_dir.borrow().as_ref().unwrap())?;
         }
 
+        let ctx = flow_node.store_ctx.as_ref().unwrap();
         let pkt_offset = self.chunk_pool.write(pkt, now, |pool_path, end_time| {
             let msg = Msg::CoverChunk(pool_path, end_time);
             let _ = self.msg_channel.try_send(msg);
@@ -74,16 +85,35 @@ impl Store {
         }
         *ctx.prev_pkt_offset.borrow_mut() = pkt_offset;
 
-        self.chunk_index.write()?;
+        if ctx.flow_key.borrow().is_none() || pkt_offset.chunk_id != ctx.chunk_id.borrow().unwrap()
+        {
+            *ctx.flow_key.borrow_mut() = Some(flow_node.key);
+            *ctx.chunk_id.borrow_mut() = Some(pkt_offset.chunk_id);
+
+            self.chunk_index.write(ChunkIndexRd {
+                start_time: flow_node.start_time,
+                end_time: 0,
+                chunk_id: pkt_offset.chunk_id,
+                chunk_offset: pkt_offset.start_offset,
+                tuple5: ctx.flow_key.borrow().unwrap(),
+            })?;
+        }
         Ok(())
     }
 
     pub fn link_fin(
         &self,
-        _tuple5: &PacketKey,
-        _start_time: u128,
-        _end_time: u128,
+        tuple5: &PacketKey,
+        start_time: u128,
+        end_time: u128,
     ) -> Result<(), StoreError> {
+        self.chunk_index.write(ChunkIndexRd {
+            start_time,
+            end_time,
+            chunk_id: 0,
+            chunk_offset: 0,
+            tuple5: *tuple5,
+        })?;
         Ok(())
     }
 

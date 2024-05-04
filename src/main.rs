@@ -177,10 +177,7 @@ fn writer_thread(
                     if node.store_ctx.is_none() {
                         node.store_ctx = Some(StoreCtx::new());
                     }
-                    if store
-                        .store(node.store_ctx.as_ref().unwrap(), pkt, now)
-                        .is_err()
-                    {
+                    if store.store(node, pkt, now).is_err() {
                         break;
                     }
 

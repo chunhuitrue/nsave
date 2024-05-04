@@ -541,7 +541,7 @@ impl fmt::Display for ChunkHead {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq, PartialOrd, Ord, Clone, Copy)]
 pub struct ChunkOffset {
     pub chunk_id: u32,
     pub start_offset: u32,

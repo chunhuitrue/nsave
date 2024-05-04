@@ -1,6 +1,11 @@
+#![allow(dead_code)]
+
 use crate::common::StoreError;
+use crate::packet::*;
+use bincode::serialized_size;
 use libc::{fcntl, F_SETLK, F_SETLKW};
 use memmap2::{MmapMut, MmapOptions};
+use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::fs::File;
 use std::fs::OpenOptions;
@@ -16,22 +21,21 @@ pub struct ChunkIndex {
     file_len: RefCell<u64>,
 
     buff_offset: RefCell<u64>,
-    actual_buff_len: u32,
     buff_map: RefCell<Option<MmapMut>>,
+    buff_len: u32,
+    write_len: RefCell<u32>,
 }
 
 impl ChunkIndex {
     pub fn new() -> Self {
-        let record_size = ChunkIndexRd::serialize_size();
-        let actual_buff_len = ((BUFF_SIZE - 1) / (record_size as u32) + 1) * (record_size as u32);
-
         ChunkIndex {
             file: RefCell::new(None),
             file_len: RefCell::new(0),
 
             buff_offset: RefCell::new(0),
-            actual_buff_len,
+            buff_len: BUFF_SIZE,
             buff_map: RefCell::new(None),
+            write_len: RefCell::new(0),
         }
     }
 
@@ -62,23 +66,34 @@ impl ChunkIndex {
         let binding = self.file.borrow_mut();
         let file = binding.as_ref().unwrap();
         *self.buff_offset.borrow_mut() = *self.file_len.borrow();
-
-        *self.file_len.borrow_mut() += self.actual_buff_len as u64;
-        file.set_len(*self.file_len.borrow())?;
-
         let mmap = unsafe {
             MmapOptions::new()
                 .offset(*self.buff_offset.borrow())
-                .len(self.actual_buff_len as usize)
+                .len(self.buff_len as usize)
                 .map_mut(file.as_raw_fd())?
         };
         *self.buff_map.borrow_mut() = Some(mmap);
+        *self.write_len.borrow_mut() = 0;
 
+        self.lock_buff()?;
+        Ok(())
+    }
+
+    pub fn change_time_dir(&self) -> Result<(), StoreError> {
+        self.flush()?;
+        *self.file.borrow_mut() = None;
+        *self.file_len.borrow_mut() = 0;
+        Ok(())
+    }
+
+    fn lock_buff(&self) -> Result<(), StoreError> {
+        let binding = self.file.borrow_mut();
+        let file = binding.as_ref().unwrap();
         let mut lock = libc::flock {
             l_type: libc::F_WRLCK,
             l_whence: libc::SEEK_SET as i16,
             l_start: *self.buff_offset.borrow() as i64,
-            l_len: self.actual_buff_len as i64,
+            l_len: self.buff_len as i64,
             l_pid: 0,
         };
         let result = unsafe { fcntl(file.as_raw_fd(), F_SETLK, &mut lock) };
@@ -90,25 +105,14 @@ impl ChunkIndex {
         Ok(())
     }
 
-    pub fn change_time_dir(&self) -> Result<(), StoreError> {
-        self.buff_map.borrow().as_ref().unwrap().flush()?;
-        self.unlock_buff()?;
-
-        *self.file.borrow_mut() = None;
-        *self.file_len.borrow_mut() = 0;
-        *self.buff_offset.borrow_mut() = 0;
-        *self.buff_map.borrow_mut() = None;
-        Ok(())
-    }
-
-    pub fn unlock_buff(&self) -> Result<(), StoreError> {
+    fn unlock_buff(&self) -> Result<(), StoreError> {
         let binding = self.file.borrow_mut();
         let file = binding.as_ref().unwrap();
         let mut lock = libc::flock {
             l_type: libc::F_UNLCK,
             l_whence: libc::SEEK_SET as i16,
             l_start: *self.buff_offset.borrow() as i64,
-            l_len: self.actual_buff_len as i64,
+            l_len: self.buff_len as i64,
             l_pid: 0,
         };
         let result = unsafe { fcntl(file.as_raw_fd(), F_SETLKW, &mut lock) };
@@ -120,8 +124,39 @@ impl ChunkIndex {
         Ok(())
     }
 
-    pub fn write(&self) -> Result<(), StoreError> {
-        // todo
+    fn flush(&self) -> Result<(), StoreError> {
+        self.buff_map
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .flush_range(0, *self.write_len.borrow() as usize)?;
+        *self.file_len.borrow_mut() += *self.write_len.borrow() as u64;
+        *self.write_len.borrow_mut() = 0;
+
+        self.unlock_buff()?;
+        Ok(())
+    }
+
+    pub fn write(&self, record: ChunkIndexRd) -> Result<(), StoreError> {
+        let record_seri_size = serialized_size(&record).unwrap() as u32;
+        if cfg!(debug_assertions) {
+            let seri_record = bincode::serialize(&record).unwrap();
+            assert_eq!(seri_record.len(), record_seri_size as usize);
+        }
+        if self.buff_len - *self.write_len.borrow() < record_seri_size {
+            self.flush()?;
+            self.next_buff()?;
+        }
+
+        let mut buf_map = self.buff_map.borrow_mut();
+        let buf_u8: &mut [u8] = buf_map.as_mut().unwrap();
+        let buf_write = &mut buf_u8[*self.write_len.borrow() as usize..];
+        if bincode::serialize_into(buf_write, &record).is_err() {
+            return Err(StoreError::WriteError(
+                "chunk index write error".to_string(),
+            ));
+        }
+        *self.write_len.borrow_mut() += record_seri_size;
         Ok(())
     }
 }
@@ -134,17 +169,15 @@ impl Default for ChunkIndex {
 
 impl Drop for ChunkIndex {
     fn drop(&mut self) {
-        let _ = self.buff_map.borrow().as_ref().unwrap().flush();
-        let _ = self.unlock_buff();
+        let _ = self.flush();
     }
 }
 
-// todo
-struct ChunkIndexRd {}
-
-impl ChunkIndexRd {
-    // todo
-    pub fn serialize_size() -> usize {
-        24
-    }
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Hash, Clone, Copy)]
+pub struct ChunkIndexRd {
+    pub start_time: u128,
+    pub end_time: u128,
+    pub chunk_id: u32,
+    pub chunk_offset: u32,
+    pub tuple5: PacketKey,
 }
