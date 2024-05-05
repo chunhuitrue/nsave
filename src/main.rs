@@ -4,16 +4,16 @@ use common::*;
 use flow::*;
 use libnsave::*;
 use packet::Packet;
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::Receiver;
-use std::sync::mpsc::SyncSender;
-use std::sync::mpsc::TryRecvError;
-use std::sync::mpsc::{self, TrySendError};
-use std::sync::{Arc, Barrier};
-use std::thread;
-use std::time::Duration;
-use store::clean_index_dir;
+use std::{
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError},
+        Arc, Barrier,
+    },
+    thread,
+    time::Duration,
+};
 use store::*;
 
 const PKT_CHANNEL_BUFF: usize = 2048;

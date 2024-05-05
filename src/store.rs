@@ -4,9 +4,12 @@ use crate::common::*;
 use crate::flow::FlowNode;
 use crate::packet::*;
 use chrono::{DateTime, Datelike, Local, Timelike};
-use std::fs;
-use std::sync::mpsc::SyncSender;
-use std::{cell::RefCell, path::Path, path::PathBuf, sync::Arc};
+use std::{
+    cell::RefCell,
+    fs,
+    path::{Path, PathBuf},
+    sync::{mpsc::SyncSender, Arc},
+};
 
 const POOL_SIZE: u64 = 1024 * 1024 * 16; // 16M
 const FILE_SIZE: u64 = 1024 * 1024 * 2; // 2M

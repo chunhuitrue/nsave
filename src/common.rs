@@ -16,6 +16,7 @@ pub enum StoreError {
     WriteError(String),
     CliError(String),
     LockError(String),
+    OpenError(String),
 }
 
 impl std::fmt::Display for StoreError {
@@ -28,6 +29,7 @@ impl std::fmt::Display for StoreError {
             StoreError::WriteError(msg) => write!(f, "Write error: {}", msg),
             StoreError::CliError(msg) => write!(f, "Write error: {}", msg),
             StoreError::LockError(msg) => write!(f, "lock error: {}", msg),
+            StoreError::OpenError(msg) => write!(f, "open error: {}", msg),
         }
     }
 }

@@ -1,41 +1,39 @@
-#![allow(dead_code)]
-
 use crate::common::StoreError;
 use crate::packet::*;
 use bincode::serialized_size;
 use libc::{fcntl, F_SETLK, F_SETLKW};
 use memmap2::{MmapMut, MmapOptions};
 use serde::{Deserialize, Serialize};
-use std::cell::RefCell;
-use std::fs::File;
-use std::fs::OpenOptions;
-use std::os::fd::AsRawFd;
-use std::path::Path;
-use std::path::PathBuf;
+use std::{
+    borrow::Borrow,
+    cell::RefCell,
+    fs::{File, OpenOptions},
+    os::fd::AsRawFd,
+    path::{Path, PathBuf},
+};
 
-const BUFF_SIZE: u32 = 1024 * 8; // 8k
+const BUFF_SIZE: u64 = 1024;
+const EXTEN_BUFF_NUM: u64 = 2;
 
 #[derive(Debug)]
 pub struct ChunkIndex {
     file: RefCell<Option<File>>,
-    file_len: RefCell<u64>,
-
+    extend_file_len: RefCell<u64>,
     buff_offset: RefCell<u64>,
     buff_map: RefCell<Option<MmapMut>>,
-    buff_len: u32,
-    write_len: RefCell<u32>,
+    write_buff_len: RefCell<u64>,
+    buff_len: u64,
 }
 
 impl ChunkIndex {
     pub fn new() -> Self {
         ChunkIndex {
             file: RefCell::new(None),
-            file_len: RefCell::new(0),
-
+            extend_file_len: RefCell::new(0),
             buff_offset: RefCell::new(0),
             buff_len: BUFF_SIZE,
             buff_map: RefCell::new(None),
-            write_len: RefCell::new(0),
+            write_buff_len: RefCell::new(0),
         }
     }
 
@@ -52,7 +50,7 @@ impl ChunkIndex {
         match result {
             Ok(fd) => {
                 let meta = fd.metadata()?;
-                *self.file_len.borrow_mut() = meta.len();
+                *self.extend_file_len.borrow_mut() = meta.len();
                 *self.file.borrow_mut() = Some(fd);
             }
             Err(e) => return Err(StoreError::IoError(e)),
@@ -63,65 +61,79 @@ impl ChunkIndex {
     }
 
     fn next_buff(&self) -> Result<(), StoreError> {
-        let binding = self.file.borrow_mut();
-        let file = binding.as_ref().unwrap();
-        *self.buff_offset.borrow_mut() = *self.file_len.borrow();
-        let mmap = unsafe {
-            MmapOptions::new()
-                .offset(*self.buff_offset.borrow())
-                .len(self.buff_len as usize)
-                .map_mut(file.as_raw_fd())?
-        };
-        *self.buff_map.borrow_mut() = Some(mmap);
-        *self.write_len.borrow_mut() = 0;
+        if let Some(file) = self.file.borrow().as_ref() {
+            if *self.buff_offset.borrow() + self.buff_len >= *self.extend_file_len.borrow() {
+                *self.extend_file_len.borrow_mut() += EXTEN_BUFF_NUM * *self.buff_len.borrow();
+                file.set_len(*self.extend_file_len.borrow())?;
+            }
 
-        self.lock_buff()?;
-        Ok(())
+            let mmap = unsafe {
+                MmapOptions::new()
+                    .offset(*self.buff_offset.borrow())
+                    .len(self.buff_len as usize)
+                    .map_mut(file.as_raw_fd())?
+            };
+            *self.buff_map.borrow_mut() = Some(mmap);
+            *self.write_buff_len.borrow_mut() = 0;
+
+            self.lock_buff()?;
+            return Ok(());
+        }
+        Err(StoreError::OpenError("file not open".to_string()))
     }
 
     pub fn change_time_dir(&self) -> Result<(), StoreError> {
         self.flush()?;
-        *self.file.borrow_mut() = None;
-        *self.file_len.borrow_mut() = 0;
-        Ok(())
+
+        if let Some(file) = self.file.borrow().as_ref() {
+            file.set_len(*self.buff_offset.borrow() + *self.write_buff_len.borrow())?;
+
+            *self.file.borrow_mut() = None;
+            *self.extend_file_len.borrow_mut() = 0;
+            *self.buff_offset.borrow_mut() = 0;
+            return Ok(());
+        }
+        Err(StoreError::OpenError("file not open".to_string()))
     }
 
     fn lock_buff(&self) -> Result<(), StoreError> {
-        let binding = self.file.borrow_mut();
-        let file = binding.as_ref().unwrap();
-        let mut lock = libc::flock {
-            l_type: libc::F_WRLCK,
-            l_whence: libc::SEEK_SET as i16,
-            l_start: *self.buff_offset.borrow() as i64,
-            l_len: self.buff_len as i64,
-            l_pid: 0,
-        };
-        let result = unsafe { fcntl(file.as_raw_fd(), F_SETLK, &mut lock) };
-        if result == -1 {
-            return Err(StoreError::LockError(
-                "lock chunkindex buff error".to_string(),
-            ));
+        if let Some(file) = self.file.borrow().as_ref() {
+            let mut lock = libc::flock {
+                l_type: libc::F_WRLCK,
+                l_whence: libc::SEEK_SET as i16,
+                l_start: *self.buff_offset.borrow() as i64,
+                l_len: self.buff_len as i64,
+                l_pid: 0,
+            };
+            let result = unsafe { fcntl(file.as_raw_fd(), F_SETLK, &mut lock) };
+            if result == -1 {
+                return Err(StoreError::LockError(
+                    "lock chunkindex buff error".to_string(),
+                ));
+            }
+            return Ok(());
         }
-        Ok(())
+        Err(StoreError::OpenError("file not open".to_string()))
     }
 
     fn unlock_buff(&self) -> Result<(), StoreError> {
-        let binding = self.file.borrow_mut();
-        let file = binding.as_ref().unwrap();
-        let mut lock = libc::flock {
-            l_type: libc::F_UNLCK,
-            l_whence: libc::SEEK_SET as i16,
-            l_start: *self.buff_offset.borrow() as i64,
-            l_len: self.buff_len as i64,
-            l_pid: 0,
-        };
-        let result = unsafe { fcntl(file.as_raw_fd(), F_SETLKW, &mut lock) };
-        if result == -1 {
-            return Err(StoreError::LockError(
-                "unlock chunk index error".to_string(),
-            ));
+        if let Some(file) = self.file.borrow().as_ref() {
+            let mut lock = libc::flock {
+                l_type: libc::F_UNLCK,
+                l_whence: libc::SEEK_SET as i16,
+                l_start: *self.buff_offset.borrow() as i64,
+                l_len: self.buff_len as i64,
+                l_pid: 0,
+            };
+            let result = unsafe { fcntl(file.as_raw_fd(), F_SETLKW, &mut lock) };
+            if result == -1 {
+                return Err(StoreError::LockError(
+                    "unlock chunk index error".to_string(),
+                ));
+            }
+            return Ok(());
         }
-        Ok(())
+        Err(StoreError::OpenError("file not open".to_string()))
     }
 
     fn flush(&self) -> Result<(), StoreError> {
@@ -129,34 +141,36 @@ impl ChunkIndex {
             .borrow()
             .as_ref()
             .unwrap()
-            .flush_range(0, *self.write_len.borrow() as usize)?;
-        *self.file_len.borrow_mut() += *self.write_len.borrow() as u64;
-        *self.write_len.borrow_mut() = 0;
+            .flush_range(0, *self.write_buff_len.borrow() as usize)?;
+
+        *self.buff_offset.borrow_mut() += *self.write_buff_len.borrow();
+        *self.buff_map.borrow_mut() = None;
+        *self.write_buff_len.borrow_mut() = 0;
 
         self.unlock_buff()?;
         Ok(())
     }
 
     pub fn write(&self, record: ChunkIndexRd) -> Result<(), StoreError> {
-        let record_seri_size = serialized_size(&record).unwrap() as u32;
+        let record_seri_size = serialized_size(&record).unwrap();
         if cfg!(debug_assertions) {
             let seri_record = bincode::serialize(&record).unwrap();
             assert_eq!(seri_record.len(), record_seri_size as usize);
         }
-        if self.buff_len - *self.write_len.borrow() < record_seri_size {
+        if self.buff_len - *self.write_buff_len.borrow() < record_seri_size {
             self.flush()?;
             self.next_buff()?;
         }
 
         let mut buf_map = self.buff_map.borrow_mut();
         let buf_u8: &mut [u8] = buf_map.as_mut().unwrap();
-        let buf_write = &mut buf_u8[*self.write_len.borrow() as usize..];
+        let buf_write = &mut buf_u8[*self.write_buff_len.borrow() as usize..];
         if bincode::serialize_into(buf_write, &record).is_err() {
             return Err(StoreError::WriteError(
                 "chunk index write error".to_string(),
             ));
         }
-        *self.write_len.borrow_mut() += record_seri_size;
+        *self.write_buff_len.borrow_mut() += record_seri_size;
         Ok(())
     }
 }
