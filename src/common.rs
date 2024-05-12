@@ -1,5 +1,7 @@
 use chrono::{DateTime, Local, TimeZone};
 use libc::timeval;
+use std::convert::From;
+use std::io;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -45,6 +47,12 @@ impl From<std::io::Error> for StoreError {
 impl From<String> for StoreError {
     fn from(err: String) -> Self {
         StoreError::InitError(err)
+    }
+}
+
+impl From<StoreError> for io::Error {
+    fn from(error: StoreError) -> io::Error {
+        io::Error::new(io::ErrorKind::Other, error)
     }
 }
 
