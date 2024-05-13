@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use crate::common::StoreError;
 use libc::{fcntl, F_SETLK, F_SETLKW};
 use memmap2::{MmapMut, MmapOptions};
@@ -14,8 +12,8 @@ pub struct MmapBufWriter {
     file: File,
     file_len: RefCell<u64>,
     mmap: RefCell<Option<MmapMut>>,
-    buff_write_len: RefCell<u64>,
-    conf_buff_len: u64,
+    buf_write_len: RefCell<u64>,
+    conf_buf_len: u64,
 }
 
 impl MmapBufWriter {
@@ -28,24 +26,25 @@ impl MmapBufWriter {
             file,
             file_len: RefCell::new(file_len),
             mmap: RefCell::new(None),
-            buff_write_len: RefCell::new(0),
-            conf_buff_len: buf_size,
+            buf_write_len: RefCell::new(0),
+            conf_buf_len: buf_size,
         }
     }
 
     fn next_mmap(&self) -> Result<(), StoreError> {
         let offset = *self.file_len.borrow();
-        *self.file_len.borrow_mut() += self.conf_buff_len;
+        *self.file_len.borrow_mut() += self.conf_buf_len;
         self.file.set_len(*self.file_len.borrow())?;
 
         let mmap = unsafe {
             MmapOptions::new()
                 .offset(offset)
-                .len(*self.conf_buff_len.borrow() as usize)
+                .len(*self.conf_buf_len.borrow() as usize)
                 .map_mut(self.file.as_raw_fd())?
         };
+
         *self.mmap.borrow_mut() = Some(mmap);
-        *self.buff_write_len.borrow_mut() = 0;
+        *self.buf_write_len.borrow_mut() = 0;
 
         self.lock_mmap()?;
         Ok(())
@@ -55,8 +54,8 @@ impl MmapBufWriter {
         let mut lock = libc::flock {
             l_type: libc::F_WRLCK,
             l_whence: libc::SEEK_SET as i16,
-            l_start: (*self.file_len.borrow() - self.conf_buff_len) as i64,
-            l_len: self.conf_buff_len as i64,
+            l_start: (*self.file_len.borrow() - self.conf_buf_len) as i64,
+            l_len: self.conf_buf_len as i64,
             l_pid: 0,
         };
         let result = unsafe { fcntl(self.file.as_raw_fd(), F_SETLK, &mut lock) };
@@ -70,8 +69,8 @@ impl MmapBufWriter {
         let mut lock = libc::flock {
             l_type: libc::F_UNLCK,
             l_whence: libc::SEEK_SET as i16,
-            l_start: (*self.file_len.borrow() - self.conf_buff_len) as i64,
-            l_len: self.conf_buff_len as i64,
+            l_start: (*self.file_len.borrow() - self.conf_buf_len) as i64,
+            l_len: self.conf_buf_len as i64,
             l_pid: 0,
         };
         let result = unsafe { fcntl(self.file.as_raw_fd(), F_SETLKW, &mut lock) };
@@ -85,9 +84,9 @@ impl MmapBufWriter {
 impl Drop for MmapBufWriter {
     fn drop(&mut self) {
         let _ = self.flush();
-        let _ = self.file.set_len(
-            *self.file_len.borrow() - (self.conf_buff_len - *self.buff_write_len.borrow()),
-        );
+        let _ = self
+            .file
+            .set_len(*self.file_len.borrow() - (self.conf_buf_len - *self.buf_write_len.borrow()));
     }
 }
 
@@ -101,11 +100,11 @@ impl Write for MmapBufWriter {
         {
             let mut buf_map = self.mmap.borrow_mut();
             let buf_u8: &mut [u8] = buf_map.as_mut().unwrap();
-            let mut buf_write = &mut buf_u8[*self.buff_write_len.borrow() as usize..];
+            let mut buf_write = &mut buf_u8[*self.buf_write_len.borrow() as usize..];
             write_len = std::io::Write::write(&mut buf_write, buf)?;
-            *self.buff_write_len.borrow_mut() += write_len as u64;
+            *self.buf_write_len.borrow_mut() += write_len as u64;
         }
-        if *self.buff_write_len.borrow() >= self.conf_buff_len {
+        if *self.buf_write_len.borrow() >= self.conf_buf_len {
             self.flush()?;
         }
         Ok(write_len)
@@ -128,8 +127,8 @@ pub struct MmapBufReader {
     mmap: RefCell<Option<MmapMut>>,
     next_offset: RefCell<usize>,
     map_len: RefCell<usize>,
-    buff_read_len: RefCell<usize>,
-    conf_buff_len: u64,
+    buf_read_len: RefCell<usize>,
+    conf_buf_len: u64,
 }
 
 impl MmapBufReader {
@@ -148,17 +147,15 @@ impl MmapBufReader {
             mmap: RefCell::new(None),
             next_offset: RefCell::new(0),
             map_len: RefCell::new(0),
-            buff_read_len: RefCell::new(0),
-            conf_buff_len,
+            buf_read_len: RefCell::new(0),
+            conf_buf_len: conf_buff_len,
         }
     }
 
     fn next_mmap(&self) -> Result<(), StoreError> {
-        *self.mmap.borrow_mut() = None;
-
         let remain = self.file_len - *self.next_offset.borrow() as u64;
-        *self.map_len.borrow_mut() = if remain >= self.conf_buff_len {
-            self.conf_buff_len as usize
+        *self.map_len.borrow_mut() = if remain >= self.conf_buf_len {
+            self.conf_buf_len as usize
         } else {
             remain as usize
         };
@@ -174,7 +171,7 @@ impl MmapBufReader {
         };
         *self.mmap.borrow_mut() = Some(mmap);
         *self.next_offset.borrow_mut() += *self.map_len.borrow();
-        *self.buff_read_len.borrow_mut() = 0;
+        *self.buf_read_len.borrow_mut() = 0;
 
         self.lock_mmap()?;
         Ok(())
@@ -219,7 +216,29 @@ impl Drop for MmapBufReader {
 
 impl Read for MmapBufReader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        todo!()
+        if self.mmap.borrow().is_none() {
+            self.next_mmap()?;
+        }
+        if *self.map_len.borrow() == 0 {
+            return Ok(0);
+        }
+
+        let read_len;
+        {
+            let buf_map = self.mmap.borrow();
+            let buf_u8: &[u8] = buf_map.as_ref().unwrap();
+            let buf_read = &buf_u8[*self.buf_read_len.borrow()..];
+            read_len = std::cmp::min(buf.len(), buf_read.len());
+
+            buf[..read_len].copy_from_slice(&buf_read[..read_len]);
+            *self.buf_read_len.borrow_mut() += read_len;
+        }
+
+        if *self.buf_read_len.borrow() >= *self.map_len.borrow() {
+            self.unlock_mmap()?;
+            *self.mmap.borrow_mut() = None;
+        }
+        Ok(read_len)
     }
 }
 
@@ -230,7 +249,11 @@ mod tests {
         chunkindex::ChunkIndexRd,
         packet::{PacketKey, TransProto},
     };
+    use bincode::deserialize_from;
+    use std::fs::OpenOptions;
     use std::net::{IpAddr, Ipv4Addr};
+    use std::os::unix::fs::OpenOptionsExt;
+    use tempfile::Builder;
     use tempfile::NamedTempFile;
 
     #[test]
@@ -257,5 +280,122 @@ mod tests {
         };
         let result = bincode::serialize_into(mmap_writer, &index);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_mmapbuf_reader() {
+        let dir = Builder::new().tempdir().unwrap();
+        let path = dir.path().join("nsavechunkindex.test");
+        println!("file path: {:?}", &path);
+        let tuple5 = PacketKey {
+            addr1: IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)),
+            port1: 111,
+            addr2: IpAddr::V4(Ipv4Addr::new(2, 2, 2, 2)),
+            port2: 222,
+            trans_proto: TransProto::Tcp,
+        };
+        let index = ChunkIndexRd {
+            start_time: 111,
+            end_time: 222,
+            chunk_id: 12,
+            chunk_offset: 100,
+            tuple5,
+        };
+
+        // write
+        let write_file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&path)
+            .unwrap();
+        let mmap_writer = MmapBufWriter::with_arg(write_file, 0, 100);
+        let result = bincode::serialize_into(mmap_writer, &index);
+        assert!(result.is_ok());
+
+        // read
+        let read_file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(false)
+            .truncate(false)
+            .open(&path)
+            .unwrap();
+        let mut mmap_reader = MmapBufReader::new(read_file);
+        let read_index = deserialize_from::<_, ChunkIndexRd>(&mut mmap_reader).unwrap();
+        assert_eq!(read_index, index);
+    }
+
+    #[test]
+    fn test_mmapbuf_many() {
+        let index_num = 10;
+        let dir = Builder::new().tempdir().unwrap();
+        let path = dir.path().join("nsavechunkindex.test");
+        println!("file path: {:?}", &path);
+
+        // write
+        let write_file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&path)
+            .unwrap();
+        let mut mmap_writer = MmapBufWriter::with_arg(write_file, 0, 100);
+        for n in 0..index_num {
+            let tuple5 = PacketKey {
+                addr1: IpAddr::V4(Ipv4Addr::new(n, 1, 1, 1)),
+                port1: 111,
+                addr2: IpAddr::V4(Ipv4Addr::new(n, 2, 2, 2)),
+                port2: 222,
+                trans_proto: TransProto::Tcp,
+            };
+            let index = ChunkIndexRd {
+                start_time: 111 + n as u128,
+                end_time: 222,
+                chunk_id: 12,
+                chunk_offset: 100,
+                tuple5,
+            };
+
+            let result = bincode::serialize_into(&mut mmap_writer, &index);
+            assert!(result.is_ok());
+        }
+
+        // read
+        let read_file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(false)
+            .truncate(false)
+            .open(&path)
+            .unwrap();
+        let mut mmap_reader = MmapBufReader::new(read_file);
+        for n in 0..index_num + 1 {
+            let tuple5 = PacketKey {
+                addr1: IpAddr::V4(Ipv4Addr::new(n, 1, 1, 1)),
+                port1: 111,
+                addr2: IpAddr::V4(Ipv4Addr::new(n, 2, 2, 2)),
+                port2: 222,
+                trans_proto: TransProto::Tcp,
+            };
+            let index = ChunkIndexRd {
+                start_time: 111 + n as u128,
+                end_time: 222,
+                chunk_id: 12,
+                chunk_offset: 100,
+                tuple5,
+            };
+
+            let read_index = deserialize_from::<_, ChunkIndexRd>(&mut mmap_reader);
+            if read_index.is_err() {
+                let _ = dbg!(read_index);
+            } else {
+                assert_eq!(read_index.unwrap(), index);
+            }
+        }
     }
 }
