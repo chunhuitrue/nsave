@@ -1,7 +1,6 @@
 use crate::common::StoreError;
 use libc::{fcntl, F_SETLK, F_SETLKW};
 use memmap2::{MmapMut, MmapOptions};
-use std::borrow::Borrow;
 use std::io::{Read, Write};
 use std::{cell::RefCell, fs::File, os::fd::AsRawFd};
 
@@ -10,9 +9,9 @@ const DEFAULT_WRITER_BUFF_SIZE: u64 = 1024;
 #[derive(Debug)]
 pub struct MmapBufWriter {
     file: File,
-    file_len: RefCell<u64>,
-    mmap: RefCell<Option<MmapMut>>,
-    buf_write_len: RefCell<u64>,
+    file_len: u64,
+    mmap: Option<MmapMut>,
+    buf_write_len: u64,
     conf_buf_len: u64,
 }
 
@@ -24,27 +23,27 @@ impl MmapBufWriter {
     pub fn with_arg(file: File, file_len: u64, buf_size: u64) -> Self {
         MmapBufWriter {
             file,
-            file_len: RefCell::new(file_len),
-            mmap: RefCell::new(None),
-            buf_write_len: RefCell::new(0),
+            file_len,
+            mmap: None,
+            buf_write_len: 0,
             conf_buf_len: buf_size,
         }
     }
 
-    fn next_mmap(&self) -> Result<(), StoreError> {
-        let offset = *self.file_len.borrow();
-        *self.file_len.borrow_mut() += self.conf_buf_len;
-        self.file.set_len(*self.file_len.borrow())?;
+    fn next_mmap(&mut self) -> Result<(), StoreError> {
+        let offset = self.file_len;
+        self.file_len += self.conf_buf_len;
+        self.file.set_len(self.file_len)?;
 
         let mmap = unsafe {
             MmapOptions::new()
                 .offset(offset)
-                .len(*self.conf_buf_len.borrow() as usize)
+                .len(self.conf_buf_len as usize)
                 .map_mut(self.file.as_raw_fd())?
         };
 
-        *self.mmap.borrow_mut() = Some(mmap);
-        *self.buf_write_len.borrow_mut() = 0;
+        self.mmap = Some(mmap);
+        self.buf_write_len = 0;
 
         self.lock_mmap()?;
         Ok(())
@@ -54,7 +53,7 @@ impl MmapBufWriter {
         let mut lock = libc::flock {
             l_type: libc::F_WRLCK,
             l_whence: libc::SEEK_SET as i16,
-            l_start: (*self.file_len.borrow() - self.conf_buf_len) as i64,
+            l_start: (self.file_len - self.conf_buf_len) as i64,
             l_len: self.conf_buf_len as i64,
             l_pid: 0,
         };
@@ -69,7 +68,7 @@ impl MmapBufWriter {
         let mut lock = libc::flock {
             l_type: libc::F_UNLCK,
             l_whence: libc::SEEK_SET as i16,
-            l_start: (*self.file_len.borrow() - self.conf_buf_len) as i64,
+            l_start: (self.file_len - self.conf_buf_len) as i64,
             l_len: self.conf_buf_len as i64,
             l_pid: 0,
         };
@@ -86,33 +85,33 @@ impl Drop for MmapBufWriter {
         let _ = self.flush();
         let _ = self
             .file
-            .set_len(*self.file_len.borrow() - (self.conf_buf_len - *self.buf_write_len.borrow()));
+            .set_len(self.file_len - (self.conf_buf_len - self.buf_write_len));
     }
 }
 
 impl Write for MmapBufWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        if self.mmap.borrow().is_none() {
+        if self.mmap.is_none() {
             self.next_mmap()?;
         }
 
         let write_len;
         {
-            let mut buf_map = self.mmap.borrow_mut();
+            let buf_map = &mut self.mmap;
             let buf_u8: &mut [u8] = buf_map.as_mut().unwrap();
-            let mut buf_write = &mut buf_u8[*self.buf_write_len.borrow() as usize..];
+            let mut buf_write = &mut buf_u8[self.buf_write_len as usize..];
             write_len = std::io::Write::write(&mut buf_write, buf)?;
-            *self.buf_write_len.borrow_mut() += write_len as u64;
+            self.buf_write_len += write_len as u64;
         }
-        if *self.buf_write_len.borrow() >= self.conf_buf_len {
+        if self.buf_write_len >= self.conf_buf_len {
             self.flush()?;
         }
         Ok(write_len)
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        self.mmap.borrow().as_ref().unwrap().flush()?;
-        *self.mmap.borrow_mut() = None;
+        self.mmap.as_ref().unwrap().flush()?;
+        self.mmap = None;
         self.unlock_mmap()?;
         Ok(())
     }
