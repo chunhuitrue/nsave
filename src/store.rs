@@ -45,7 +45,7 @@ pub struct Store {
     current_dir_date: RefCell<DateTime<Local>>,
     chunk_pool: ChunkPool,
     msg_channel: SyncSender<Msg>,
-    chunk_index: ChunkIndex,
+    chunk_index: RefCell<ChunkIndex>,
 }
 
 impl Store {
@@ -56,7 +56,7 @@ impl Store {
             current_dir_date: RefCell::new(ts_date(0)),
             chunk_pool: ChunkPool::new(store_dir, POOL_SIZE, FILE_SIZE, CHUNK_SIZE),
             msg_channel,
-            chunk_index: ChunkIndex::new(),
+            chunk_index: RefCell::new(ChunkIndex::new()),
         }
     }
 
@@ -74,6 +74,7 @@ impl Store {
         if self.current_dir.borrow().is_none() {
             self.mk_time_dir(now)?;
             self.chunk_index
+                .borrow_mut()
                 .init_time_dir(self.current_dir.borrow().as_ref().unwrap())?;
         }
 
@@ -93,7 +94,7 @@ impl Store {
             *ctx.flow_key.borrow_mut() = Some(flow_node.key);
             *ctx.chunk_id.borrow_mut() = Some(pkt_offset.chunk_id);
 
-            self.chunk_index.write(ChunkIndexRd {
+            self.chunk_index.borrow_mut().write(ChunkIndexRd {
                 start_time: flow_node.start_time,
                 end_time: 0,
                 chunk_id: pkt_offset.chunk_id,
@@ -110,7 +111,7 @@ impl Store {
         start_time: u128,
         end_time: u128,
     ) -> Result<(), StoreError> {
-        self.chunk_index.write(ChunkIndexRd {
+        self.chunk_index.borrow_mut().write(ChunkIndexRd {
             start_time,
             end_time,
             chunk_id: 0,
@@ -140,7 +141,7 @@ impl Store {
     }
 
     fn change_dir(&self, _now: u128) -> Result<(), StoreError> {
-        self.chunk_index.change_time_dir()?;
+        self.chunk_index.borrow_mut().change_time_dir()?;
         Ok(())
     }
 
