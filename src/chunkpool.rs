@@ -704,7 +704,7 @@ pub fn dump_data_file(da_path: PathBuf) -> Result<(), StoreError> {
     {
         Ok(file_fd) => file_fd,
         Err(e) => {
-            return Err(StoreError::CliError(format!("open data file error: {}", e)));
+            return Err(StoreError::CliError(format!("open file error: {}", e)));
         }
     };
 

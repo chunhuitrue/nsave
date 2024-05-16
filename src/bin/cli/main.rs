@@ -1,5 +1,6 @@
 use chrono::NaiveDateTime;
 use clap::{arg, value_parser, Command};
+use libnsave::chunkindex::dump_chunkid_file;
 use libnsave::chunkpool::*;
 use libnsave::common::*;
 use libnsave::packet::*;
@@ -25,6 +26,10 @@ fn main() -> Result<(), StoreError> {
     // }
     match matches.subcommand() {
         Some(("dump", sub_matches)) => {
+            if let Some(chunkid_file) = sub_matches.get_one::<String>("chunkid_file") {
+                return dump_chunkid_file(chunkid_file.into());
+            }
+
             if let Some(pool_file) = sub_matches.get_one::<String>("pool_file") {
                 return dump_pool_file(pool_file.into());
             }
@@ -94,6 +99,11 @@ fn cli() -> Command {
         .subcommand(
             Command::new("dump")
                 .about("dump a file. .pl .ti .ci .da or chunk")
+                .arg(
+                    arg!(-C - -chunkid_file <FILENAME>)
+                        .help("dump chunkid file")
+                        .required(false),
+                )
                 .arg(
                     arg!(-p - -pool_file <FILENAME>)
                         .help("dump pool file")

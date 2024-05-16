@@ -1,6 +1,8 @@
 use crate::common::StoreError;
 use crate::mmapbuf::*;
 use crate::packet::*;
+use bincode::deserialize;
+use bincode::deserialize_from;
 use serde::{Deserialize, Serialize};
 use std::{
     fs::OpenOptions,
@@ -22,7 +24,7 @@ impl ChunkIndex {
     pub fn init_time_dir(&mut self, dir: &Path) -> Result<(), StoreError> {
         let mut path = PathBuf::new();
         path.push(dir);
-        path.push("chunkindex");
+        path.push("chunkindex.ci");
         let result = OpenOptions::new()
             .read(true)
             .write(true)
@@ -69,4 +71,34 @@ pub struct ChunkIndexRd {
     pub chunk_id: u32,
     pub chunk_offset: u32,
     pub tuple5: PacketKey,
+}
+
+pub fn dump_chunkid_file(path: PathBuf) -> Result<(), StoreError> {
+    match path.extension() {
+        Some(ext) => {
+            if !ext.to_str().unwrap().eq("ci") {
+                return Err(StoreError::CliError("not chunkindex file".to_string()));
+            }
+        }
+        None => return Err(StoreError::CliError("not chunkindex file".to_string())),
+    };
+
+    let ci_file = match OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(false)
+        .truncate(false)
+        .open(&path)
+    {
+        Ok(fd) => fd,
+        Err(e) => {
+            return Err(StoreError::CliError(format!("open file error: {}", e)));
+        }
+    };
+    let mut mmap_reader = MmapBufReader::new(ci_file);
+    println!("dump chunkid file: {:?}", path);
+    while let Ok(record) = deserialize_from::<_, ChunkIndexRd>(&mut mmap_reader) {
+        println!("record: {:?}", record);
+    }
+    Ok(())
 }
