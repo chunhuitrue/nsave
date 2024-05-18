@@ -1,4 +1,4 @@
-use chrono::{DateTime, Local, TimeZone};
+use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
 use libc::timeval;
 use std::convert::From;
 use std::io;
@@ -71,6 +71,13 @@ pub fn ts_date(timestamp: u128) -> DateTime<Local> {
             .expect("Failed to convert to local time")
             .naive_utc(),
     )
+}
+
+pub fn date_ts(time: Option<NaiveDateTime>) -> Option<u128> {
+    time.map(|t| {
+        let datetime_local: DateTime<Local> = Local.from_local_datetime(&t).unwrap();
+        datetime_local.timestamp_nanos_opt().map(|ts| ts as u128)
+    })?
 }
 
 pub fn ts_timeval(timestamp: u128) -> timeval {

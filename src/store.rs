@@ -3,6 +3,7 @@ use crate::chunkpool::*;
 use crate::common::*;
 use crate::flow::FlowNode;
 use crate::packet::*;
+use crate::timeindex::*;
 use chrono::{DateTime, Datelike, Local, Timelike};
 use std::{
     cell::RefCell,
@@ -20,6 +21,8 @@ pub struct StoreCtx {
     prev_pkt_offset: RefCell<ChunkOffset>,
     flow_key: RefCell<Option<PacketKey>>,
     chunk_id: RefCell<Option<u32>>,
+
+    ti_write: RefCell<bool>,
 }
 
 impl StoreCtx {
@@ -28,6 +31,7 @@ impl StoreCtx {
             prev_pkt_offset: RefCell::new(ChunkOffset::new()),
             flow_key: RefCell::new(None),
             chunk_id: RefCell::new(None),
+            ti_write: RefCell::new(false),
         }
     }
 }
@@ -46,6 +50,7 @@ pub struct Store {
     chunk_pool: ChunkPool,
     msg_channel: SyncSender<Msg>,
     chunk_index: RefCell<ChunkIndex>,
+    time_index: RefCell<TimeIndex>,
 }
 
 impl Store {
@@ -57,6 +62,7 @@ impl Store {
             chunk_pool: ChunkPool::new(store_dir, POOL_SIZE, FILE_SIZE, CHUNK_SIZE),
             msg_channel,
             chunk_index: RefCell::new(ChunkIndex::new()),
+            time_index: RefCell::new(TimeIndex::new()),
         }
     }
 
@@ -75,7 +81,10 @@ impl Store {
             self.mk_time_dir(now)?;
             self.chunk_index
                 .borrow_mut()
-                .init_time_dir(self.current_dir.borrow().as_ref().unwrap())?;
+                .init_dir(self.current_dir.borrow().as_ref().unwrap())?;
+            self.time_index
+                .borrow_mut()
+                .init_dir(self.current_dir.borrow().as_ref().unwrap())?;
         }
 
         let ctx = flow_node.store_ctx.as_ref().unwrap();
@@ -89,18 +98,34 @@ impl Store {
         }
         *ctx.prev_pkt_offset.borrow_mut() = pkt_offset;
 
-        if ctx.flow_key.borrow().is_none() || pkt_offset.chunk_id != ctx.chunk_id.borrow().unwrap()
+        let ci_offset = if ctx.flow_key.borrow().is_none()
+            || pkt_offset.chunk_id != ctx.chunk_id.borrow().unwrap()
         {
             *ctx.flow_key.borrow_mut() = Some(flow_node.key);
             *ctx.chunk_id.borrow_mut() = Some(pkt_offset.chunk_id);
-
-            self.chunk_index.borrow_mut().write(ChunkIndexRd {
+            let offset = self.chunk_index.borrow_mut().write(ChunkIndexRd {
                 start_time: flow_node.start_time,
                 end_time: 0,
                 chunk_id: pkt_offset.chunk_id,
                 chunk_offset: pkt_offset.start_offset,
                 tuple5: ctx.flow_key.borrow().unwrap(),
             })?;
+            Some(offset)
+        } else {
+            None
+        };
+
+        if let Some(offset) = ci_offset {
+            let mut ti_write = ctx.ti_write.borrow_mut();
+            if !*ti_write {
+                *ti_write = true;
+                self.time_index.borrow_mut().write(LinkRecord {
+                    start_time: flow_node.start_time,
+                    end_time: 0,
+                    tuple5: ctx.flow_key.borrow().unwrap(),
+                    ci_offset: offset,
+                })?;
+            }
         }
         Ok(())
     }
@@ -111,13 +136,22 @@ impl Store {
         start_time: u128,
         end_time: u128,
     ) -> Result<(), StoreError> {
-        self.chunk_index.borrow_mut().write(ChunkIndexRd {
+        let ci_offset = self.chunk_index.borrow_mut().write(ChunkIndexRd {
             start_time,
             end_time,
             chunk_id: 0,
             chunk_offset: 0,
             tuple5: *tuple5,
-        })?;
+        });
+
+        if let Ok(offset) = ci_offset {
+            self.time_index.borrow_mut().write(LinkRecord {
+                start_time,
+                end_time,
+                tuple5: *tuple5,
+                ci_offset: offset,
+            })?;
+        }
         Ok(())
     }
 
@@ -134,14 +168,11 @@ impl Store {
             && date_now.hour() == cur_dir_date.hour()
             && date_now.minute() == cur_dir_date.minute())
         {
-            self.change_dir(now)?;
+            self.chunk_index.borrow_mut().change_dir()?;
+            self.time_index.borrow_mut().change_dir()?;
+
             *self.current_dir.borrow_mut() = None;
         }
-        Ok(())
-    }
-
-    fn change_dir(&self, _now: u128) -> Result<(), StoreError> {
-        self.chunk_index.borrow_mut().change_time_dir()?;
         Ok(())
     }
 

@@ -78,6 +78,14 @@ impl MmapBufWriter {
         }
         Ok(())
     }
+
+    pub fn next_offset(&self) -> u64 {
+        if self.mmap.is_none() {
+            self.file_len
+        } else {
+            self.file_len - (self.conf_buf_len - self.buf_write_len)
+        }
+    }
 }
 
 impl Drop for MmapBufWriter {

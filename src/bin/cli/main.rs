@@ -26,7 +26,11 @@ fn main() -> Result<(), StoreError> {
     // }
     match matches.subcommand() {
         Some(("dump", sub_matches)) => {
-            if let Some(chunkid_file) = sub_matches.get_one::<String>("chunkid_file") {
+            if let Some(timeindex_file) = sub_matches.get_one::<String>("timeindex_file") {
+                return dump_timeindex_file(timeindex_file.into());
+            }
+
+            if let Some(chunkid_file) = sub_matches.get_one::<String>("chunkindex_file") {
                 return dump_chunkid_file(chunkid_file.into());
             }
 
@@ -100,8 +104,13 @@ fn cli() -> Command {
             Command::new("dump")
                 .about("dump a file. .pl .ti .ci .da or chunk")
                 .arg(
-                    arg!(-C - -chunkid_file <FILENAME>)
-                        .help("dump chunkid file")
+                    arg!(-t - -timeindex_file <FILENAME>)
+                        .help("dump time index file")
+                        .required(false),
+                )
+                .arg(
+                    arg!(-C - -chunkindex_file <FILENAME>)
+                        .help("dump chunk index file")
                         .required(false),
                 )
                 .arg(
