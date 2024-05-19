@@ -70,15 +70,20 @@ fn main() -> Result<(), StoreError> {
             let protocol = sub_matches.get_one::<TransProto>("protocol");
             let sport = sub_matches.get_one::<u16>("sport");
             let dport = sub_matches.get_one::<u16>("dport");
-            search(
-                start_time.copied(),
-                end_time.copied(),
-                sip.copied(),
-                dip.copied(),
-                protocol.copied(),
-                sport.copied(),
-                dport.copied(),
-            );
+            let search_key = SearchKey {
+                start_time: start_time.copied(),
+                end_time: end_time.copied(),
+                sip: sip.copied(),
+                dip: dip.copied(),
+                sport: sport.copied(),
+                dport: dport.copied(),
+                protocol: protocol.copied(),
+            };
+            if let Some(file) = sub_matches.get_one::<String>("pcap_file") {
+                write_pcap(search_key, file.into());
+            } else {
+                search(search_key);
+            };
             Ok(())
         }
         _ => {
@@ -142,7 +147,11 @@ fn cli() -> Command {
         )
         .subcommand(
             Command::new("search")
-                .about("search a link")
+                .about(
+                    "search a link.\n\
+                       example: nsave-cli search -s 2024-05-18-15:36:36 -e 2024-05-18-15:36:47 \
+                        --sip 10.11.20.255 -D 10.11.20.14 -P udp -p 137 -d 137",
+                )
                 .arg(
                     arg!(-s - -start_time <STARTTIME>)
                         .help("link start time")
@@ -184,6 +193,11 @@ fn cli() -> Command {
                         .help("destination port")
                         .value_parser(value_parser!(u16).range(1..))
                         .required(false),
+                )
+                .arg(
+                    arg!(-f - -pcap_file <PCAPFILE>)
+                        .help("dump search result to pcap file")
+                        .required(false),
                 ),
         )
 }
@@ -210,23 +224,28 @@ fn parse_protocol(protocol: &str) -> Result<TransProto, String> {
     }
 }
 
-fn search(
-    stime: Option<NaiveDateTime>,
-    etime: Option<NaiveDateTime>,
-    sip: Option<IpAddr>,
-    dip: Option<IpAddr>,
-    protocol: Option<TransProto>,
-    sport: Option<u16>,
-    dport: Option<u16>,
-) {
-    let ti_record = search_ti_file(stime, etime, sip, dip, protocol, sport, dport);
+fn search(search_key: SearchKey) {
+    let ti_record = search_ti_file(search_key);
     if ti_record.is_empty() {
         println!("no link found");
         return;
     }
 
-    println!("find these link:");
-    for record in &ti_record {
-        println!("link: {:?}", record);
+    println!("find link:");
+    for ti in &ti_record {
+        println!("{}", ti);
+    }
+}
+
+fn write_pcap(search_key: SearchKey, _pcap_file: PathBuf) {
+    let ti_record = search_ti_file(search_key);
+    if ti_record.is_empty() {
+        println!("no link found");
+        return;
+    }
+
+    println!("find link:");
+    for ti in &ti_record {
+        println!("{}", ti);
     }
 }

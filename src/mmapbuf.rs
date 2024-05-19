@@ -125,7 +125,7 @@ impl Write for MmapBufWriter {
     }
 }
 
-const DEFAULT_READEER_BUFF_SIEZ: u64 = 1024;
+pub const DEFAULT_READEER_BUFF_SIEZ: u64 = 1024;
 
 #[derive(Debug)]
 pub struct MmapBufReader {
@@ -140,10 +140,10 @@ pub struct MmapBufReader {
 
 impl MmapBufReader {
     pub fn new(file: File) -> Self {
-        MmapBufReader::with_arg(file, DEFAULT_READEER_BUFF_SIEZ)
+        MmapBufReader::with_arg(file, 0, DEFAULT_READEER_BUFF_SIEZ)
     }
 
-    pub fn with_arg(file: File, conf_buff_len: u64) -> Self {
+    pub fn with_arg(file: File, offset: usize, conf_buff_len: u64) -> Self {
         let file_len = match file.metadata() {
             Ok(meta) => meta.len(),
             Err(_) => 0,
@@ -152,7 +152,7 @@ impl MmapBufReader {
             file,
             file_len,
             mmap: RefCell::new(None),
-            next_offset: RefCell::new(0),
+            next_offset: RefCell::new(offset),
             map_len: RefCell::new(0),
             buf_read_len: RefCell::new(0),
             conf_buf_len: conf_buff_len,

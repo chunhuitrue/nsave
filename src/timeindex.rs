@@ -78,11 +78,40 @@ impl fmt::Display for LinkRecord {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "LinkRecord {{ start_time: {}, end_time: {}, tuple5: {:?}, ci_offset: {} }}",
+            "LinkRecord {{ start_time: {} ({}), end_time: {} ({}), tuple5: {:?}, ci_offset: {} }}",
             ts_date(self.start_time),
+            self.start_time,
             ts_date(self.end_time),
+            self.end_time,
             self.tuple5,
             self.ci_offset
+        )
+    }
+}
+
+#[derive(Debug, Eq, PartialEq, Hash, Clone, Copy)]
+pub struct SearchKey {
+    pub start_time: Option<NaiveDateTime>,
+    pub end_time: Option<NaiveDateTime>,
+    pub sip: Option<IpAddr>,
+    pub dip: Option<IpAddr>,
+    pub sport: Option<u16>,
+    pub dport: Option<u16>,
+    pub protocol: Option<TransProto>,
+}
+
+impl fmt::Display for SearchKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "SearchKey {{ start_time: {:?} ({:?}), end_time: {:?} ({:?}), sport: {:?}, dport: {:?}, protocol: {:?} }}",
+            self.start_time,
+            date_ts(self.start_time),
+            self.end_time,
+            date_ts(self.end_time),
+            self.sport,
+            self.dport,
+            self.protocol
         )
     }
 }
@@ -117,28 +146,14 @@ pub fn dump_timeindex_file(path: PathBuf) -> Result<(), StoreError> {
     Ok(())
 }
 
-pub fn search_ti_file(
-    stime: Option<NaiveDateTime>,
-    etime: Option<NaiveDateTime>,
-    sip: Option<IpAddr>,
-    dip: Option<IpAddr>,
-    protocol: Option<TransProto>,
-    sport: Option<u16>,
-    dport: Option<u16>,
-) -> Vec<LinkRecord> {
-    println!(
-        "search for start time: {:?}, end time: {:?}, sip: {:?}, sport: {:?} -- dip: {:?}, dport: {:?}, protocol: {:?}",
-        stime, etime, sip, sport, dip, dport, protocol
-    );
-
+pub fn search_ti_file(search_key: SearchKey) -> Vec<LinkRecord> {
+    println!("{}", search_key);
     let mut record: Vec<LinkRecord> = Vec::new();
-    for dir in 0..THREAD_NUM {
-        let mut search_time = stime.unwrap();
-        while search_time < etime.unwrap() {
-            if let Ok((file_ti, file_ti_path)) = time2file_ti(search_time, dir) {
-                println!("find a time index file: {:?}", file_ti_path);
-                let mut file_record =
-                    search_ti(file_ti, stime, etime, sip, dip, protocol, sport, dport);
+    for dir_id in 0..THREAD_NUM {
+        let mut search_time = search_key.start_time.unwrap();
+        while search_time < search_key.end_time.unwrap() {
+            if let Ok((ti_file, _ti_file_path)) = time2file_ti(search_time, dir_id) {
+                let mut file_record = search_ti(search_key, ti_file);
                 record.append(&mut file_record);
             } else {
                 continue;
@@ -172,57 +187,29 @@ pub fn time2file_ti(time: NaiveDateTime, dir: u64) -> Result<(File, PathBuf), St
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn search_ti(
-    file_ti: File,
-    stime: Option<NaiveDateTime>,
-    etime: Option<NaiveDateTime>,
-    sip: Option<IpAddr>,
-    dip: Option<IpAddr>,
-    protocol: Option<TransProto>,
-    sport: Option<u16>,
-    dport: Option<u16>,
-) -> Vec<LinkRecord> {
+fn search_ti(search_key: SearchKey, file_ti: File) -> Vec<LinkRecord> {
     let mut record: Vec<LinkRecord> = Vec::new();
     let mut reader = MmapBufReader::new(file_ti);
     while let Ok(ti) = deserialize_from::<_, LinkRecord>(&mut reader) {
-        if match_ti(
-            date_ts(stime),
-            date_ts(etime),
-            sip,
-            dip,
-            protocol,
-            sport,
-            dport,
-            &ti,
-        ) {
+        if match_ti(search_key, &ti) {
             record.push(ti);
         }
     }
     record
 }
 
-#[allow(clippy::too_many_arguments)]
-fn match_ti(
-    stime: Option<u128>,
-    etime: Option<u128>,
-    sip: Option<IpAddr>,
-    dip: Option<IpAddr>,
-    protocol: Option<TransProto>,
-    sport: Option<u16>,
-    dport: Option<u16>,
-    record: &LinkRecord,
-) -> bool {
-    println!(
-        "\n{}, stime:{:?}, etime:{:?}",
-        record, record.start_time, record.end_time
-    );
-    println!(
-        "stime: {:?}, etime: {:?}, sip: {:?}, dip: {:?}, sport: {:?}, dport: {:?}, proto: {:?}",
-        stime, etime, sip, dip, sport, dport, protocol
-    );
-    let stime_m = match_stime(record.start_time, stime);
-    dbg!(stime_m);
+fn match_ti(search_key: SearchKey, record: &LinkRecord) -> bool {
+    let SearchKey {
+        start_time,
+        end_time,
+        sip,
+        dip,
+        sport,
+        dport,
+        protocol,
+    } = search_key;
+    let stime = date_ts(start_time);
+    let etime = date_ts(end_time);
 
     let match0 = match_stime(record.start_time, stime)
         && match_etime(record.end_time, etime)
