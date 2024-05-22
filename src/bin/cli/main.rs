@@ -1,9 +1,12 @@
+#![allow(dead_code)]
+
 use chrono::NaiveDateTime;
 use clap::{arg, value_parser, Command};
 use libnsave::chunkindex::dump_chunkid_file;
 use libnsave::chunkpool::*;
 use libnsave::common::*;
 use libnsave::packet::*;
+use libnsave::searchti::*;
 use libnsave::timeindex::*;
 use std::net::IpAddr;
 use std::path::PathBuf;
@@ -79,11 +82,14 @@ fn main() -> Result<(), StoreError> {
                 dport: dport.copied(),
                 protocol: protocol.copied(),
             };
-            if let Some(file) = sub_matches.get_one::<String>("pcap_file") {
-                write_pcap(search_key, file.into());
-            } else {
-                search(search_key);
-            };
+            let ti_record = search_ti_record(search_key);
+            dbg!(ti_record);
+
+            // if let Some(file) = sub_matches.get_one::<String>("pcap_file") {
+            //     write_pcap(search_key, file.into());
+            // } else {
+            //     search(search_key);
+            // };
             Ok(())
         }
         _ => {

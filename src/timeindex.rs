@@ -1,6 +1,7 @@
 use crate::common::*;
 use crate::mmapbuf::*;
 use crate::packet::*;
+use crate::searchti::*;
 use bincode::deserialize_from;
 use chrono::{Datelike, Duration, NaiveDateTime, Timelike};
 use serde::{Deserialize, Serialize};
@@ -89,33 +90,6 @@ impl fmt::Display for LinkRecord {
     }
 }
 
-#[derive(Debug, Eq, PartialEq, Hash, Clone, Copy)]
-pub struct SearchKey {
-    pub start_time: Option<NaiveDateTime>,
-    pub end_time: Option<NaiveDateTime>,
-    pub sip: Option<IpAddr>,
-    pub dip: Option<IpAddr>,
-    pub sport: Option<u16>,
-    pub dport: Option<u16>,
-    pub protocol: Option<TransProto>,
-}
-
-impl fmt::Display for SearchKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "SearchKey {{ start_time: {:?} ({:?}), end_time: {:?} ({:?}), sport: {:?}, dport: {:?}, protocol: {:?} }}",
-            self.start_time,
-            date_ts(self.start_time),
-            self.end_time,
-            date_ts(self.end_time),
-            self.sport,
-            self.dport,
-            self.protocol
-        )
-    }
-}
-
 pub fn dump_timeindex_file(path: PathBuf) -> Result<(), StoreError> {
     match path.extension() {
         Some(ext) => {
@@ -144,6 +118,10 @@ pub fn dump_timeindex_file(path: PathBuf) -> Result<(), StoreError> {
         println!("{}", record);
     }
     Ok(())
+}
+
+pub fn search_ti_record(search_key: SearchKey) -> Vec<LinkRecord> {
+    todo!()
 }
 
 pub fn search_ti_file(search_key: SearchKey) -> Vec<LinkRecord> {
