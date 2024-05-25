@@ -1,12 +1,13 @@
 use crate::common::*;
 use crate::mmapbuf::*;
 use crate::packet::*;
-use crate::searchti::*;
 use bincode::deserialize_from;
 use chrono::{Datelike, Duration, NaiveDateTime, Timelike};
 use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
+use std::collections::HashSet;
 use std::fmt;
+use std::hash::{Hash, Hasher};
 use std::net::IpAddr;
 use std::{
     fs::{File, OpenOptions},
@@ -67,12 +68,27 @@ impl Default for TimeIndex {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Hash, Clone, Copy)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 pub struct LinkRecord {
     pub start_time: u128,
     pub end_time: u128,
     pub tuple5: PacketKey,
     pub ci_offset: u64,
+}
+
+impl PartialEq for LinkRecord {
+    fn eq(&self, other: &Self) -> bool {
+        self.start_time == other.start_time && self.tuple5 == other.tuple5
+    }
+}
+
+impl Eq for LinkRecord {}
+
+impl Hash for LinkRecord {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.start_time.hash(state);
+        self.tuple5.hash(state);
+    }
 }
 
 impl fmt::Display for LinkRecord {
@@ -86,6 +102,33 @@ impl fmt::Display for LinkRecord {
             self.end_time,
             self.tuple5,
             self.ci_offset
+        )
+    }
+}
+
+#[derive(Debug, Eq, PartialEq, Hash, Clone, Copy)]
+pub struct SearchKey {
+    pub start_time: Option<NaiveDateTime>,
+    pub end_time: Option<NaiveDateTime>,
+    pub sip: Option<IpAddr>,
+    pub dip: Option<IpAddr>,
+    pub sport: Option<u16>,
+    pub dport: Option<u16>,
+    pub protocol: Option<TransProto>,
+}
+
+impl fmt::Display for SearchKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "SearchKey {{ start_time: {:?} ({:?}), end_time: {:?} ({:?}), sport: {:?}, dport: {:?}, protocol: {:?} }}",
+            self.start_time,
+            date_ts(self.start_time),
+            self.end_time,
+            date_ts(self.end_time),
+            self.sport,
+            self.dport,
+            self.protocol
         )
     }
 }
@@ -120,29 +163,72 @@ pub fn dump_timeindex_file(path: PathBuf) -> Result<(), StoreError> {
     Ok(())
 }
 
-pub fn search_ti_record(search_key: SearchKey) -> Vec<LinkRecord> {
-    todo!()
-}
+// pub fn search_ti_only(search_key: SearchKey) -> Vec<LinkRecord> {
+//     let mut record: Vec<LinkRecord> = Vec::new();
+//     for dir_id in 0..THREAD_NUM {
+//         let mut ti_set = HashSet::new();
+//         let mut search_time = search_key.start_time.unwrap();
+//         while search_time < search_key.end_time.unwrap() {
+//             if let Ok((ti_file, _ti_file_path)) = time2file_ti(search_time, dir_id) {
+//                 let tis = search_ti_file(search_key, ti_file);
+//                 for ti in tis {
+//                     ti_set.insert(ti);
+//                 }
+//             }
+//             search_time += Duration::try_minutes(1).unwrap();
+//         }
+//         let mut dir_ti: Vec<LinkRecord> = ti_set.into_iter().collect();
+//         record.append(&mut dir_ti);
+//     }
+//     record
+// }
 
-pub fn search_ti_file(search_key: SearchKey) -> Vec<LinkRecord> {
-    println!("{}", search_key);
-    let mut record: Vec<LinkRecord> = Vec::new();
-    for dir_id in 0..THREAD_NUM {
-        let mut search_time = search_key.start_time.unwrap();
-        while search_time < search_key.end_time.unwrap() {
-            if let Ok((ti_file, _ti_file_path)) = time2file_ti(search_time, dir_id) {
-                let mut file_record = search_ti(search_key, ti_file);
-                record.append(&mut file_record);
-            } else {
-                continue;
-            }
-            search_time += Duration::try_minutes(1).unwrap();
+// pub fn search_ti(search_key: SearchKey) -> Vec<LinkRecord> {
+//     println!("{}", search_key);
+//     let mut record: Vec<LinkRecord> = Vec::new();
+//     for dir_id in 0..THREAD_NUM {
+//         let mut search_time = search_key.start_time.unwrap();
+//         while search_time < search_key.end_time.unwrap() {
+//             if let Ok((ti_file, _ti_file_path)) = time2file_ti(search_time, dir_id) {
+//                 let mut file_record = search_ti_file(search_key, ti_file);
+//                 record.append(&mut file_record);
+//             }
+//             search_time += Duration::try_minutes(1).unwrap();
+//         }
+//     }
+//     record
+// }
+
+// pub fn old_search_ti_dir(search_key: SearchKey, dir_id: u64) -> Vec<LinkRecord> {
+//     let mut ti_set = HashSet::new();
+//     let mut search_time = search_key.start_time.unwrap();
+//     while search_time < search_key.end_time.unwrap() {
+//         if let Ok((ti_file, _ti_file_path)) = time2file_ti(search_time, dir_id) {
+//             let tis = search_ti_file(search_key, ti_file);
+//             for ti in tis {
+//                 ti_set.insert(ti);
+//             }
+//         }
+//         search_time += Duration::try_minutes(1).unwrap();
+//     }
+//     ti_set.into_iter().collect()
+// }
+
+pub fn search_ti_dir(search_key: SearchKey, dir_id: u64) -> Vec<LinkRecord> {
+    let mut ti_set = HashSet::new();
+    let mut search_time = search_key.start_time.unwrap();
+    while search_time < search_key.end_time.unwrap() {
+        if let Ok((ti_file, _ti_file_path)) = time2file_ti(search_time, dir_id) {
+            ti_set = search_ti_file(search_key, ti_file)
+                .into_iter()
+                .collect::<HashSet<_>>();
         }
+        search_time += Duration::try_minutes(1).unwrap();
     }
-    record
+    ti_set.into_iter().collect()
 }
 
-pub fn time2file_ti(time: NaiveDateTime, dir: u64) -> Result<(File, PathBuf), StoreError> {
+fn time2file_ti(time: NaiveDateTime, dir: u64) -> Result<(File, PathBuf), StoreError> {
     let mut path = PathBuf::new();
     path.push(STORE_PATH);
     path.push(format!("{:03}", dir));
@@ -165,7 +251,7 @@ pub fn time2file_ti(time: NaiveDateTime, dir: u64) -> Result<(File, PathBuf), St
     }
 }
 
-fn search_ti(search_key: SearchKey, file_ti: File) -> Vec<LinkRecord> {
+fn search_ti_file(search_key: SearchKey, file_ti: File) -> Vec<LinkRecord> {
     let mut record: Vec<LinkRecord> = Vec::new();
     let mut reader = MmapBufReader::new(file_ti);
     while let Ok(ti) = deserialize_from::<_, LinkRecord>(&mut reader) {

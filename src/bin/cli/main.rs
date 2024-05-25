@@ -6,7 +6,6 @@ use libnsave::chunkindex::dump_chunkid_file;
 use libnsave::chunkpool::*;
 use libnsave::common::*;
 use libnsave::packet::*;
-use libnsave::searchti::*;
 use libnsave::timeindex::*;
 use std::net::IpAddr;
 use std::path::PathBuf;
@@ -82,14 +81,12 @@ fn main() -> Result<(), StoreError> {
                 dport: dport.copied(),
                 protocol: protocol.copied(),
             };
-            let ti_record = search_ti_record(search_key);
-            dbg!(ti_record);
 
-            // if let Some(file) = sub_matches.get_one::<String>("pcap_file") {
-            //     write_pcap(search_key, file.into());
-            // } else {
-            //     search(search_key);
-            // };
+            if let Some(file) = sub_matches.get_one::<String>("pcap_file") {
+                write_pcap(search_key, file.into());
+            } else {
+                search(search_key);
+            };
             Ok(())
         }
         _ => {
@@ -231,27 +228,58 @@ fn parse_protocol(protocol: &str) -> Result<TransProto, String> {
 }
 
 fn search(search_key: SearchKey) {
-    let ti_record = search_ti_file(search_key);
-    if ti_record.is_empty() {
-        println!("no link found");
-        return;
-    }
+    for dir_id in 0..THREAD_NUM {
+        let dir_ti = search_ti_dir(search_key, dir_id);
+        if dir_ti.is_empty() {
+            continue;
+        }
 
-    println!("find link:");
-    for ti in &ti_record {
-        println!("{}", ti);
+        println!("find link:");
+        for ti in dir_ti {
+            println!("{}", ti);
+        }
     }
 }
 
 fn write_pcap(search_key: SearchKey, _pcap_file: PathBuf) {
-    let ti_record = search_ti_file(search_key);
-    if ti_record.is_empty() {
-        println!("no link found");
-        return;
-    }
+    for dir_id in 0..THREAD_NUM {
+        let dir_ti = search_ti_dir(search_key, dir_id);
+        if dir_ti.is_empty() {
+            continue;
+        }
 
-    println!("find link:");
-    for ti in &ti_record {
-        println!("{}", ti);
+        println!("find link:");
+        for ti in &dir_ti {
+            println!("{}", ti);
+        }
+
+        if let Some(start_time) = &dir_ti.iter().min_by_key(|ti| ti.start_time) {
+            dbg!(start_time);
+        }
     }
 }
+
+// fn search(search_key: SearchKey) {
+//     let ti_record = search_ti_only(search_key);
+//     if ti_record.is_empty() {
+//         println!("no link found");
+//         return;
+//     }
+//     println!("find link:");
+//     for ti in &ti_record {
+//         println!("{}", ti);
+//     }
+// }
+
+// fn old_write_pcap(search_key: SearchKey, _pcap_file: PathBuf) {
+//     let ti_record = search_ti(search_key);
+//     if ti_record.is_empty() {
+//         println!("no link found");
+//         return;
+//     }
+
+//     println!("find link:");
+//     for ti in &ti_record {
+//         println!("{}", ti);
+//     }
+// }

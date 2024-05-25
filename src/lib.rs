@@ -5,6 +5,5 @@ pub mod common;
 pub mod flow;
 pub mod mmapbuf;
 pub mod packet;
-pub mod searchti;
 pub mod store;
 pub mod timeindex;
