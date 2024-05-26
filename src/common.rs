@@ -1,4 +1,4 @@
-use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
+use chrono::{DateTime, Datelike, Local, NaiveDateTime, TimeZone, Timelike};
 use libc::timeval;
 use std::convert::From;
 use std::io;
@@ -94,4 +94,16 @@ pub fn timenow() -> u128 {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos()
+}
+
+pub fn date2dir(dir_id: u64, date: NaiveDateTime) -> PathBuf {
+    let mut path = PathBuf::new();
+    path.push(STORE_PATH);
+    path.push(format!("{:03}", dir_id));
+    path.push(format!("{:04}", date.year()));
+    path.push(format!("{:02}", date.month()));
+    path.push(format!("{:02}", date.day()));
+    path.push(format!("{:02}", date.hour()));
+    path.push(format!("{:02}", date.minute()));
+    path
 }

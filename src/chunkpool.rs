@@ -607,6 +607,29 @@ impl fmt::Display for StorePacket {
     }
 }
 
+#[derive(Debug)]
+pub struct ChunkPoolSearch {}
+
+impl ChunkPoolSearch {
+    pub fn new() -> Self {
+        ChunkPoolSearch {}
+    }
+
+    pub fn load_chunk(&self, _chunk_id: u32, _offset: u32) -> Result<(), StoreError> {
+        todo!()
+    }
+
+    pub fn next_pkt(&self) -> Result<StorePacket, StoreError> {
+        todo!()
+    }
+}
+
+impl Default for ChunkPoolSearch {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 fn read_pool_head(path: &PathBuf) -> Result<PoolHead, StoreError> {
     match path.extension() {
         Some(ext) => {

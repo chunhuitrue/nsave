@@ -216,27 +216,27 @@ pub fn dump_timeindex_file(path: PathBuf) -> Result<(), StoreError> {
 
 pub fn search_ti_dir(search_key: SearchKey, dir_id: u64) -> Vec<LinkRecord> {
     let mut ti_set = HashSet::new();
-    let mut search_time = search_key.start_time.unwrap();
-    while search_time < search_key.end_time.unwrap() {
-        if let Ok((ti_file, _ti_file_path)) = time2file_ti(search_time, dir_id) {
+    let mut search_date = search_key.start_time.unwrap();
+    while search_date < search_key.end_time.unwrap() {
+        if let Ok((ti_file, _ti_file_path)) = date2file_ti(search_date, dir_id) {
             ti_set = search_ti_file(search_key, ti_file)
                 .into_iter()
                 .collect::<HashSet<_>>();
         }
-        search_time += Duration::try_minutes(1).unwrap();
+        search_date += Duration::try_minutes(1).unwrap();
     }
     ti_set.into_iter().collect()
 }
 
-fn time2file_ti(time: NaiveDateTime, dir: u64) -> Result<(File, PathBuf), StoreError> {
+fn date2file_ti(date: NaiveDateTime, dir: u64) -> Result<(File, PathBuf), StoreError> {
     let mut path = PathBuf::new();
     path.push(STORE_PATH);
     path.push(format!("{:03}", dir));
-    path.push(format!("{:04}", time.year()));
-    path.push(format!("{:02}", time.month()));
-    path.push(format!("{:02}", time.day()));
-    path.push(format!("{:02}", time.hour()));
-    path.push(format!("{:02}", time.minute()));
+    path.push(format!("{:04}", date.year()));
+    path.push(format!("{:02}", date.month()));
+    path.push(format!("{:02}", date.day()));
+    path.push(format!("{:02}", date.hour()));
+    path.push(format!("{:02}", date.minute()));
     path.push("timeindex.ti");
 
     match OpenOptions::new()

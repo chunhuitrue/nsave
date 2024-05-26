@@ -89,6 +89,19 @@ impl fmt::Display for ChunkIndexRd {
     }
 }
 
+#[derive(Debug)]
+pub struct ChunkIndexSearch {}
+
+impl ChunkIndexSearch {
+    pub fn new(_dir: &Path, _offset: u64) -> Self {
+        ChunkIndexSearch {}
+    }
+
+    pub fn next_rd(&self) -> Option<ChunkIndexRd> {
+        todo!()
+    }
+}
+
 pub fn dump_chunkid_file(path: PathBuf) -> Result<(), StoreError> {
     match path.extension() {
         Some(ext) => {

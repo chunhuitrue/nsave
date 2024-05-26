@@ -1,13 +1,15 @@
 #![allow(dead_code)]
 
-use chrono::NaiveDateTime;
+use chrono::{Duration, Local, NaiveDateTime};
 use clap::{arg, value_parser, Command};
-use libnsave::chunkindex::dump_chunkid_file;
+use libnsave::chunkindex::*;
 use libnsave::chunkpool::*;
 use libnsave::common::*;
 use libnsave::packet::*;
 use libnsave::timeindex::*;
+use std::collections::HashSet;
 use std::net::IpAddr;
+use std::path::Path;
 use std::path::PathBuf;
 
 fn main() -> Result<(), StoreError> {
@@ -83,9 +85,9 @@ fn main() -> Result<(), StoreError> {
             };
 
             if let Some(file) = sub_matches.get_one::<String>("pcap_file") {
-                write_pcap(search_key, file.into());
+                search_dump(search_key, file.into());
             } else {
-                search(search_key);
+                search_only(search_key);
             };
             Ok(())
         }
@@ -227,7 +229,7 @@ fn parse_protocol(protocol: &str) -> Result<TransProto, String> {
     }
 }
 
-fn search(search_key: SearchKey) {
+fn search_only(search_key: SearchKey) {
     for dir_id in 0..THREAD_NUM {
         let dir_ti = search_ti_dir(search_key, dir_id);
         if dir_ti.is_empty() {
@@ -241,7 +243,7 @@ fn search(search_key: SearchKey) {
     }
 }
 
-fn write_pcap(search_key: SearchKey, _pcap_file: PathBuf) {
+fn search_dump(search_key: SearchKey, pcap_file: PathBuf) {
     for dir_id in 0..THREAD_NUM {
         let dir_ti = search_ti_dir(search_key, dir_id);
         if dir_ti.is_empty() {
@@ -252,34 +254,46 @@ fn write_pcap(search_key: SearchKey, _pcap_file: PathBuf) {
         for ti in &dir_ti {
             println!("{}", ti);
         }
+        search(dir_ti, &pcap_file, dir_id);
+    }
+}
 
-        if let Some(start_time) = &dir_ti.iter().min_by_key(|ti| ti.start_time) {
-            dbg!(start_time);
+fn search(ti: Vec<LinkRecord>, pcap_file: &Path, dir_id: u64) {
+    if let Some(mini_ti) = &ti.iter().min_by_key(|ti| ti.start_time) {
+        let cl_search = ChunkPoolSearch::new();
+        let mut rd_set: HashSet<PacketKey> = ti.iter().map(|rd| rd.tuple5).collect();
+        let mut search_date = ts_date(mini_ti.start_time).naive_local();
+        let date_end = Local::now().naive_local();
+        while search_date < date_end && !rd_set.is_empty() {
+            let dir = date2dir(dir_id, search_date);
+            if !dir.exists() {
+                continue;
+            }
+
+            let offset = ci_offset(&dir, mini_ti.tuple5);
+            let ci_search = ChunkIndexSearch::new(&dir, offset);
+            while let Some(rd) = ci_search.next_rd() {
+                if rd.end_time != 0 {
+                    rd_set.remove(&rd.tuple5);
+                    continue;
+                }
+                if rd_set.contains(&rd.tuple5) {
+                    let _ = cl_search.load_chunk(rd.chunk_id, rd.chunk_offset);
+                    while let Ok(pkt) = cl_search.next_pkt() {
+                        let _ = write_pcap(pkt, pcap_file);
+                    }
+                }
+            }
+
+            search_date += Duration::try_minutes(1).unwrap();
         }
     }
 }
 
-// fn search(search_key: SearchKey) {
-//     let ti_record = search_ti_only(search_key);
-//     if ti_record.is_empty() {
-//         println!("no link found");
-//         return;
-//     }
-//     println!("find link:");
-//     for ti in &ti_record {
-//         println!("{}", ti);
-//     }
-// }
+fn ci_offset(_dir: &Path, _tuple5: PacketKey) -> u64 {
+    todo!()
+}
 
-// fn old_write_pcap(search_key: SearchKey, _pcap_file: PathBuf) {
-//     let ti_record = search_ti(search_key);
-//     if ti_record.is_empty() {
-//         println!("no link found");
-//         return;
-//     }
-
-//     println!("find link:");
-//     for ti in &ti_record {
-//         println!("{}", ti);
-//     }
-// }
+fn write_pcap(_pkt: StorePacket, _pcap_file: &Path) -> Result<(), StoreError> {
+    todo!()
+}
