@@ -214,7 +214,7 @@ pub fn dump_timeindex_file(path: PathBuf) -> Result<(), StoreError> {
 //     ti_set.into_iter().collect()
 // }
 
-pub fn search_ti_dir(search_key: SearchKey, dir_id: u64) -> Vec<LinkRecord> {
+pub fn ti_search(search_key: SearchKey, dir_id: u64) -> Vec<LinkRecord> {
     let mut ti_set = HashSet::new();
     let mut search_date = search_key.start_time.unwrap();
     while search_date < search_key.end_time.unwrap() {
@@ -238,6 +238,7 @@ fn date2file_ti(date: NaiveDateTime, dir: u64) -> Result<(File, PathBuf), StoreE
     path.push(format!("{:02}", date.hour()));
     path.push(format!("{:02}", date.minute()));
     path.push("timeindex.ti");
+    println!("search from file: {:?}", path);
 
     match OpenOptions::new()
         .read(true)

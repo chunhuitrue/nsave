@@ -231,7 +231,7 @@ fn parse_protocol(protocol: &str) -> Result<TransProto, String> {
 
 fn search_only(search_key: SearchKey) {
     for dir_id in 0..THREAD_NUM {
-        let dir_ti = search_ti_dir(search_key, dir_id);
+        let dir_ti = ti_search(search_key, dir_id);
         if dir_ti.is_empty() {
             continue;
         }
@@ -245,7 +245,7 @@ fn search_only(search_key: SearchKey) {
 
 fn search_dump(search_key: SearchKey, pcap_file: PathBuf) {
     for dir_id in 0..THREAD_NUM {
-        let dir_ti = search_ti_dir(search_key, dir_id);
+        let dir_ti = ti_search(search_key, dir_id);
         if dir_ti.is_empty() {
             continue;
         }
