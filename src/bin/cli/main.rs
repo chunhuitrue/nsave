@@ -254,37 +254,34 @@ fn search_dump(search_key: SearchKey, pcap_file: PathBuf) {
         for ti in &dir_ti {
             println!("{}", ti);
         }
-        search(dir_ti, &pcap_file, dir_id);
+        dump(dir_ti, &pcap_file, dir_id);
     }
 }
 
-fn search(ti: Vec<LinkRecord>, pcap_file: &Path, dir_id: u64) {
+fn dump(ti: Vec<LinkRecord>, pcap_file: &Path, dir_id: u64) {
     if let Some(mini_ti) = &ti.iter().min_by_key(|ti| ti.start_time) {
-        let cl_search = ChunkPoolSearch::new();
+        let cp_search = ChunkPoolSearch::new();
         let mut rd_set: HashSet<PacketKey> = ti.iter().map(|rd| rd.tuple5).collect();
         let mut search_date = ts_date(mini_ti.start_time).naive_local();
         let date_end = Local::now().naive_local();
         while search_date < date_end && !rd_set.is_empty() {
             let dir = date2dir(dir_id, search_date);
-            if !dir.exists() {
-                continue;
-            }
-
-            let offset = ci_offset(&dir, mini_ti.tuple5);
-            let ci_search = ChunkIndexSearch::new(&dir, offset);
-            while let Some(rd) = ci_search.next_rd() {
-                if rd.end_time != 0 {
-                    rd_set.remove(&rd.tuple5);
-                    continue;
-                }
-                if rd_set.contains(&rd.tuple5) {
-                    let _ = cl_search.load_chunk(rd.chunk_id, rd.chunk_offset);
-                    while let Ok(pkt) = cl_search.next_pkt() {
-                        let _ = write_pcap(pkt, pcap_file);
+            if dir.exists() {
+                let offset = ci_offset(&dir, mini_ti.tuple5);
+                let ci_search = ChunkIndexSearch::new(&dir, offset);
+                while let Some(rd) = ci_search.next_rd() {
+                    if rd.end_time != 0 {
+                        rd_set.remove(&rd.tuple5);
+                        continue;
+                    }
+                    if rd_set.contains(&rd.tuple5) {
+                        let _ = cp_search.load_chunk(rd.chunk_id, rd.chunk_offset);
+                        while let Ok(pkt) = cp_search.next_pkt() {
+                            let _ = write_pcap(pkt, pcap_file);
+                        }
                     }
                 }
             }
-
             search_date += Duration::try_minutes(1).unwrap();
         }
     }
