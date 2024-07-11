@@ -85,7 +85,7 @@ fn main() -> Result<(), StoreError> {
             };
 
             if let Some(file) = sub_matches.get_one::<String>("pcap_file") {
-                search_dump(search_key, file.into());
+                search_dump(search_key, file.into())?;
             } else {
                 search_only(search_key);
             };
@@ -243,7 +243,7 @@ fn search_only(search_key: SearchKey) {
     }
 }
 
-fn search_dump(search_key: SearchKey, pcap_file: PathBuf) {
+fn search_dump(search_key: SearchKey, pcap_file: PathBuf) -> Result<(), StoreError> {
     for dir_id in 0..THREAD_NUM {
         let dir_ti = ti_search(search_key, dir_id);
         if dir_ti.is_empty() {
@@ -254,11 +254,12 @@ fn search_dump(search_key: SearchKey, pcap_file: PathBuf) {
         for ti in &dir_ti {
             println!("{}", ti);
         }
-        dump(dir_ti, &pcap_file, dir_id);
+        dump(dir_ti, &pcap_file, dir_id)?;
     }
+    Ok(())
 }
 
-fn dump(ti: Vec<LinkRecord>, pcap_file: &Path, dir_id: u64) {
+fn dump(ti: Vec<LinkRecord>, pcap_file: &Path, dir_id: u64) -> Result<(), StoreError> {
     if let Some(mini_ti) = &ti.iter().min_by_key(|ti| ti.start_time) {
         let cp_search = ChunkPoolSearch::new();
         let mut rd_set: HashSet<PacketKey> = ti.iter().map(|rd| rd.tuple5).collect();
@@ -267,17 +268,18 @@ fn dump(ti: Vec<LinkRecord>, pcap_file: &Path, dir_id: u64) {
         while search_date < date_end && !rd_set.is_empty() {
             let dir = date2dir(dir_id, search_date);
             if dir.exists() {
-                let offset = ci_offset(&dir, mini_ti.tuple5);
-                let ci_search = ChunkIndexSearch::new(&dir, offset);
-                while let Some(rd) = ci_search.next_rd() {
-                    if rd.end_time != 0 {
-                        rd_set.remove(&rd.tuple5);
-                        continue;
-                    }
-                    if rd_set.contains(&rd.tuple5) {
-                        let _ = cp_search.load_chunk(rd.chunk_id, rd.chunk_offset);
-                        while let Ok(pkt) = cp_search.next_pkt() {
-                            let _ = write_pcap(pkt, pcap_file);
+                if let Some(link_rd) = search_lr(&dir, mini_ti.tuple5) {
+                    let ci_search = ChunkIndexSearch::new(&dir, link_rd.ci_offset);
+                    while let Some(rd) = ci_search.next_rd() {
+                        if rd.end_time != 0 {
+                            rd_set.remove(&rd.tuple5);
+                            continue;
+                        }
+                        if rd_set.contains(&rd.tuple5) {
+                            let _ = cp_search.load_chunk(rd.chunk_id, rd.chunk_offset);
+                            while let Ok(pkt) = cp_search.next_pkt() {
+                                write_pcap(pkt, pcap_file)?;
+                            }
                         }
                     }
                 }
@@ -285,10 +287,7 @@ fn dump(ti: Vec<LinkRecord>, pcap_file: &Path, dir_id: u64) {
             search_date += Duration::try_minutes(1).unwrap();
         }
     }
-}
-
-fn ci_offset(_dir: &Path, _tuple5: PacketKey) -> u64 {
-    todo!()
+    Ok(())
 }
 
 fn write_pcap(_pkt: StorePacket, _pcap_file: &Path) -> Result<(), StoreError> {

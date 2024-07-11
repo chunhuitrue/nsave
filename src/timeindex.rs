@@ -219,7 +219,7 @@ pub fn ti_search(search_key: SearchKey, dir_id: u64) -> Vec<LinkRecord> {
     let mut search_date = search_key.start_time.unwrap();
     while search_date < search_key.end_time.unwrap() {
         if let Ok((ti_file, _ti_file_path)) = date2file_ti(search_date, dir_id) {
-            ti_set = search_ti_file(search_key, ti_file)
+            ti_set = search_ti(search_key, ti_file)
                 .into_iter()
                 .collect::<HashSet<_>>();
         }
@@ -252,7 +252,7 @@ fn date2file_ti(date: NaiveDateTime, dir: u64) -> Result<(File, PathBuf), StoreE
     }
 }
 
-fn search_ti_file(search_key: SearchKey, file_ti: File) -> Vec<LinkRecord> {
+fn search_ti(search_key: SearchKey, file_ti: File) -> Vec<LinkRecord> {
     let mut record: Vec<LinkRecord> = Vec::new();
     let mut reader = MmapBufReader::new(file_ti);
     while let Ok(ti) = deserialize_from::<_, LinkRecord>(&mut reader) {
@@ -328,4 +328,8 @@ fn match_port(rd_port: u16, op_port: Option<u16>) -> bool {
     } else {
         true
     }
+}
+
+pub fn search_lr(_dir: &Path, _tuple5: PacketKey) -> Option<LinkRecord> {
+    todo!()
 }
