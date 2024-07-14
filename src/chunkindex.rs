@@ -90,15 +90,40 @@ impl fmt::Display for ChunkIndexRd {
 }
 
 #[derive(Debug)]
-pub struct ChunkIndexSearch {}
+pub struct ChunkIndexSearch {
+    reader: Option<MmapBufReader>,
+}
 
 impl ChunkIndexSearch {
-    pub fn new(_dir: &Path, _offset: u64) -> Self {
-        ChunkIndexSearch {}
+    pub fn new(dir: &Path, offset: u64) -> Self {
+        let mut path = PathBuf::new();
+        path.push(dir);
+        path.push("chunkindex.ci");
+        let result = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path);
+        match result {
+            Ok(file) => ChunkIndexSearch {
+                reader: Some(MmapBufReader::new_with_arg(
+                    file,
+                    offset as usize,
+                    DEFAULT_READEER_BUFF_SIEZ,
+                )),
+            },
+            Err(_e) => ChunkIndexSearch { reader: None },
+        }
     }
 
-    pub fn next_rd(&self) -> Option<ChunkIndexRd> {
-        todo!()
+    pub fn next_rd(&mut self) -> Option<ChunkIndexRd> {
+        if let Some(ref mut reader) = self.reader {
+            if let Ok(rd) = bincode::deserialize_from(reader) {
+                return Some(rd);
+            }
+        }
+        None
     }
 }
 

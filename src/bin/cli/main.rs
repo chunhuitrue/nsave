@@ -261,7 +261,7 @@ fn search_dump(search_key: SearchKey, pcap_file: PathBuf) -> Result<(), StoreErr
 
 fn dump(ti: Vec<LinkRecord>, pcap_file: &Path, dir_id: u64) -> Result<(), StoreError> {
     if let Some(mini_ti) = &ti.iter().min_by_key(|ti| ti.start_time) {
-        let cp_search = ChunkPoolSearch::new();
+        let cp_search = ChunkPoolSearch::new(dir_id);
         let mut rd_set: HashSet<PacketKey> = ti.iter().map(|rd| rd.tuple5).collect();
         let mut search_date = ts_date(mini_ti.start_time).naive_local();
         let date_end = Local::now().naive_local();
@@ -269,17 +269,19 @@ fn dump(ti: Vec<LinkRecord>, pcap_file: &Path, dir_id: u64) -> Result<(), StoreE
             let dir = date2dir(dir_id, search_date);
             if dir.exists() {
                 if let Some(link_rd) = search_lr(&dir, mini_ti.tuple5) {
-                    let ci_search = ChunkIndexSearch::new(&dir, link_rd.ci_offset);
+                    let mut ci_search = ChunkIndexSearch::new(&dir, link_rd.ci_offset);
                     while let Some(rd) = ci_search.next_rd() {
+                        if !rd_set.contains(&rd.tuple5) {
+                            continue;
+                        }
+
                         if rd.end_time != 0 {
                             rd_set.remove(&rd.tuple5);
                             continue;
                         }
-                        if rd_set.contains(&rd.tuple5) {
-                            let _ = cp_search.load_chunk(rd.chunk_id, rd.chunk_offset);
-                            while let Ok(pkt) = cp_search.next_pkt() {
-                                write_pcap(pkt, pcap_file)?;
-                            }
+                        cp_search.load_chunk(rd.chunk_id, rd.chunk_offset)?;
+                        while let Ok(pkt) = cp_search.next_pkt() {
+                            write_pcap(pkt, pcap_file)?;
                         }
                     }
                 }
@@ -291,5 +293,5 @@ fn dump(ti: Vec<LinkRecord>, pcap_file: &Path, dir_id: u64) -> Result<(), StoreE
 }
 
 fn write_pcap(_pkt: StorePacket, _pcap_file: &Path) -> Result<(), StoreError> {
-    todo!()
+    Ok(())
 }

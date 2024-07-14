@@ -140,10 +140,10 @@ pub struct MmapBufReader {
 
 impl MmapBufReader {
     pub fn new(file: File) -> Self {
-        MmapBufReader::with_arg(file, 0, DEFAULT_READEER_BUFF_SIEZ)
+        MmapBufReader::new_with_arg(file, 0, DEFAULT_READEER_BUFF_SIEZ)
     }
 
-    pub fn with_arg(file: File, offset: usize, conf_buff_len: u64) -> Self {
+    pub fn new_with_arg(file: File, offset: usize, conf_buff_len: u64) -> Self {
         let file_len = match file.metadata() {
             Ok(meta) => meta.len(),
             Err(_) => 0,

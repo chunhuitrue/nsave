@@ -7,6 +7,8 @@ use pcap::Capture as PcapCapture;
 use pcap::Linktype;
 use pcap::Packet as CapPacket;
 use pcap::PacketHeader as CapPacketHeader;
+use std::borrow::Borrow;
+use std::borrow::BorrowMut;
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Cursor, Read, Write};
@@ -608,25 +610,61 @@ impl fmt::Display for StorePacket {
 }
 
 #[derive(Debug)]
-pub struct ChunkPoolSearch {}
+pub struct ChunkPoolSearch {
+    pool_path: PathBuf,
+    pool_head: RefCell<Option<PoolHead>>,
+    actual_size: RefCell<Option<ActualSize>>,
+    chunk_id: RefCell<Option<u32>>,
+    next_pkt_offset: RefCell<Option<u32>>,
+    chunk_map: RefCell<Option<MmapMut>>,
+}
 
 impl ChunkPoolSearch {
-    pub fn new() -> Self {
-        ChunkPoolSearch {}
+    pub fn new(dir_id: u64) -> Self {
+        let mut path = PathBuf::new();
+        path.push(STORE_PATH);
+        path.push(format!("{:03}", dir_id));
+        path.push("chunk_pool");
+
+        ChunkPoolSearch {
+            pool_path: path,
+            pool_head: RefCell::new(None),
+            actual_size: RefCell::new(None),
+            chunk_id: RefCell::new(None),
+            chunk_map: RefCell::new(None),
+            next_pkt_offset: RefCell::new(None),
+        }
     }
 
-    pub fn load_chunk(&self, _chunk_id: u32, _offset: u32) -> Result<(), StoreError> {
+    pub fn load_chunk(&self, chunk_id: u32, offset: u32) -> Result<(), StoreError> {
+        if self.chunk_map.borrow().is_some() && self.chunk_id.borrow().unwrap() == chunk_id {
+            *self.next_pkt_offset.borrow_mut() = Some(offset);
+            return Ok(());
+        }
+
+        if self.pool_head.borrow().is_none() {
+            let mut head_path = PathBuf::new();
+            head_path.push(&self.pool_path);
+            head_path.push("pool.pl");
+            let pool_head = read_pool_head(&head_path)?;
+            let actual_size = ActualSize::new(
+                pool_head.pool_size,
+                pool_head.file_size,
+                pool_head.chunk_size,
+            );
+            *self.pool_head.borrow_mut() = Some(pool_head);
+            *self.actual_size.borrow_mut() = Some(actual_size);
+        }
+        *self.chunk_id.borrow_mut() = Some(chunk_id);
+        *self.next_pkt_offset.borrow_mut() = Some(offset);
+
+        let data_file_id = chunk_id / self.actual_size.borrow().as_ref().unwrap().file_chunk_num;
+
         todo!()
     }
 
     pub fn next_pkt(&self) -> Result<StorePacket, StoreError> {
         todo!()
-    }
-}
-
-impl Default for ChunkPoolSearch {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -805,7 +843,6 @@ pub fn dump_chunk(
             return Err(StoreError::CliError(format!("open data file error: {}", e)));
         }
     };
-
     let inner_chunk_id = chunk_id - data_file_id * actual_size.file_chunk_num;
     let offset = inner_chunk_id * pool_head.chunk_size;
     if let Ok(mmap) = get_chunk(&data_file, offset, pool_head.chunk_size as usize) {
