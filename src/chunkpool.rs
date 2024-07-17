@@ -7,8 +7,6 @@ use pcap::Capture as PcapCapture;
 use pcap::Linktype;
 use pcap::Packet as CapPacket;
 use pcap::PacketHeader as CapPacketHeader;
-use std::borrow::Borrow;
-use std::borrow::BorrowMut;
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Cursor, Read, Write};
@@ -616,7 +614,7 @@ pub struct ChunkPoolSearch {
     actual_size: RefCell<Option<ActualSize>>,
     chunk_id: RefCell<Option<u32>>,
     next_pkt_offset: RefCell<Option<u32>>,
-    chunk_map: RefCell<Option<MmapMut>>,
+    chunk_map: RefCell<Option<Mmap>>,
 }
 
 impl ChunkPoolSearch {
@@ -658,9 +656,31 @@ impl ChunkPoolSearch {
         *self.chunk_id.borrow_mut() = Some(chunk_id);
         *self.next_pkt_offset.borrow_mut() = Some(offset);
 
-        let data_file_id = chunk_id / self.actual_size.borrow().as_ref().unwrap().file_chunk_num;
-
-        todo!()
+        let file_chunk_num = self.actual_size.borrow().as_ref().unwrap().file_chunk_num;
+        let data_file_id = chunk_id / file_chunk_num;
+        let data_file_path = self.pool_path.join(format!("{:03}.da", data_file_id));
+        let data_file = match OpenOptions::new()
+            .read(true)
+            .write(false)
+            .create(false)
+            .truncate(false)
+            .open(data_file_path)
+        {
+            Ok(file_fd) => file_fd,
+            Err(e) => {
+                return Err(StoreError::CliError(format!("open data file error: {}", e)));
+            }
+        };
+        let inner_chunk_id = chunk_id - data_file_id * file_chunk_num;
+        let chunk_size = self.pool_head.borrow().as_ref().unwrap().chunk_size;
+        let offset = inner_chunk_id * chunk_size;
+        match get_chunk(&data_file, offset, chunk_size as usize) {
+            Ok(mmap) => *self.chunk_map.borrow_mut() = Some(mmap),
+            Err(e) => {
+                return Err(StoreError::CliError(format!("map chunk error: {}", e)));
+            }
+        }
+        Ok(())
     }
 
     pub fn next_pkt(&self) -> Result<StorePacket, StoreError> {
