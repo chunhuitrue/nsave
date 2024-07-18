@@ -684,7 +684,13 @@ impl ChunkPoolSearch {
     }
 
     pub fn next_pkt(&self) -> Result<StorePacket, StoreError> {
-        todo!()
+        let offset = self.next_pkt_offset.borrow().unwrap() as usize;
+        let binding = self.chunk_map.borrow();
+        let chunk = binding.as_ref().unwrap();
+        let mut cursor = Cursor::new(&chunk[offset..]);
+        let pkt = StorePacket::deserialize_from(&mut cursor)?;
+        *self.next_pkt_offset.borrow_mut() = Some(pkt.next_offset);
+        Ok(pkt)
     }
 }
 
