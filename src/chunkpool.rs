@@ -172,8 +172,12 @@ impl ChunkPool {
         let mut chunk_map = self.chunk_map.borrow_mut();
         let chunk_u8: &mut [u8] = chunk_map.as_mut().unwrap();
         let mut chunk_offset = &mut chunk_u8[offset as usize..];
+        self.serialize_update(&mut chunk_offset, value)?;
+        Ok(())
+    }
 
-        chunk_offset.write_all(&value.to_be_bytes())?;
+    fn serialize_update<W: Write>(&self, writer: &mut W, value: u32) -> Result<(), StoreError> {
+        writer.write_all(&value.to_le_bytes())?;
         Ok(())
     }
 
@@ -489,7 +493,7 @@ impl fmt::Display for PoolHead {
 struct ChunkHead {
     start_time: u128,
     end_time: u128,
-    filled_size: u32,
+    filled_size: u32, // 包括chunkhead在内
 }
 
 impl ChunkHead {
@@ -564,10 +568,10 @@ impl Default for ChunkOffset {
 
 #[derive(Debug)]
 pub struct StorePacket {
-    next_offset: u32,
-    timestamp: u128,
-    data_len: u16,
-    data: Vec<u8>,
+    pub next_offset: u32,
+    pub timestamp: u128,
+    pub data_len: u16,
+    pub data: Vec<u8>,
 }
 
 impl StorePacket {
@@ -683,14 +687,25 @@ impl ChunkPoolSearch {
         Ok(())
     }
 
-    pub fn next_pkt(&self) -> Result<StorePacket, StoreError> {
+    pub fn next_pkt(&self) -> Option<StorePacket> {
+        if self.next_pkt_offset.borrow().is_none() {
+            return None;
+        }
+
         let offset = self.next_pkt_offset.borrow().unwrap() as usize;
         let binding = self.chunk_map.borrow();
         let chunk = binding.as_ref().unwrap();
         let mut cursor = Cursor::new(&chunk[offset..]);
-        let pkt = StorePacket::deserialize_from(&mut cursor)?;
-        *self.next_pkt_offset.borrow_mut() = Some(pkt.next_offset);
-        Ok(pkt)
+
+        if let Ok(pkt) = StorePacket::deserialize_from(&mut cursor) {
+            if pkt.next_offset == 0 {
+                *self.next_pkt_offset.borrow_mut() = None;
+            } else {
+                *self.next_pkt_offset.borrow_mut() = Some(pkt.next_offset);
+            }
+            return Some(pkt);
+        }
+        None
     }
 }
 

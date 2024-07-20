@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+// #![allow(dead_code)]
 
 use chrono::{Duration, Local, NaiveDateTime};
 use clap::{arg, value_parser, Command};
@@ -7,6 +7,11 @@ use libnsave::chunkpool::*;
 use libnsave::common::*;
 use libnsave::packet::*;
 use libnsave::timeindex::*;
+use pcap::Capture as PcapCapture;
+use pcap::Linktype;
+use pcap::Packet as CapPacket;
+use pcap::PacketHeader as CapPacketHeader;
+use pcap::Savefile;
 use std::collections::HashSet;
 use std::net::IpAddr;
 use std::path::Path;
@@ -261,6 +266,13 @@ fn search_dump(search_key: SearchKey, pcap_file: PathBuf) -> Result<(), StoreErr
 
 fn dump(ti: Vec<LinkRecord>, pcap_file: &Path, dir_id: u64) -> Result<(), StoreError> {
     if let Some(mini_ti) = &ti.iter().min_by_key(|ti| ti.start_time) {
+        let capture = PcapCapture::dead(Linktype::ETHERNET);
+        if capture.is_err() {
+            return Err(StoreError::WriteError("pcap open error".to_string()));
+        }
+        let capture = capture.unwrap();
+        let mut savefile = capture.savefile(pcap_file).unwrap();
+
         let cp_search = ChunkPoolSearch::new(dir_id);
         let mut rd_set: HashSet<PacketKey> = ti.iter().map(|rd| rd.tuple5).collect();
         let mut search_date = ts_date(mini_ti.start_time).naive_local();
@@ -280,8 +292,18 @@ fn dump(ti: Vec<LinkRecord>, pcap_file: &Path, dir_id: u64) -> Result<(), StoreE
                             continue;
                         }
                         cp_search.load_chunk(rd.chunk_id, rd.chunk_offset)?;
-                        while let Ok(pkt) = cp_search.next_pkt() {
-                            write_pcap(pkt, pcap_file)?;
+                        while let Some(pkt) = cp_search.next_pkt() {
+                            println!("write pkt:{}", pkt);
+                            let header = CapPacketHeader {
+                                ts: ts_timeval(pkt.timestamp),
+                                caplen: pkt.data_len as u32,
+                                len: pkt.data_len as u32,
+                            };
+                            let cap_pkt = CapPacket {
+                                header: &header,
+                                data: &pkt.data,
+                            };
+                            savefile.write(&cap_pkt);
                         }
                     }
                 }
@@ -289,9 +311,5 @@ fn dump(ti: Vec<LinkRecord>, pcap_file: &Path, dir_id: u64) -> Result<(), StoreE
             search_date += Duration::try_minutes(1).unwrap();
         }
     }
-    Ok(())
-}
-
-fn write_pcap(_pkt: StorePacket, _pcap_file: &Path) -> Result<(), StoreError> {
     Ok(())
 }
