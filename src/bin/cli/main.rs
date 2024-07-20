@@ -1,5 +1,3 @@
-// #![allow(dead_code)]
-
 use chrono::{Duration, Local, NaiveDateTime};
 use clap::{arg, value_parser, Command};
 use libnsave::chunkindex::*;
@@ -11,7 +9,6 @@ use pcap::Capture as PcapCapture;
 use pcap::Linktype;
 use pcap::Packet as CapPacket;
 use pcap::PacketHeader as CapPacketHeader;
-use pcap::Savefile;
 use std::collections::HashSet;
 use std::net::IpAddr;
 use std::path::Path;
