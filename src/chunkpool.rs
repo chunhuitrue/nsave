@@ -399,7 +399,7 @@ impl Drop for ChunkPool {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 struct ActualSize {
     actual_file_size: u64,
     actual_file_num: u32,
@@ -435,7 +435,7 @@ impl fmt::Display for ActualSize {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 struct PoolHead {
     pool_size: u64,
     file_size: u64,
@@ -614,11 +614,11 @@ impl fmt::Display for StorePacket {
 #[derive(Debug)]
 pub struct ChunkPoolSearch {
     pool_path: PathBuf,
-    pool_head: RefCell<Option<PoolHead>>,
-    actual_size: RefCell<Option<ActualSize>>,
-    chunk_id: RefCell<Option<u32>>,
-    next_pkt_offset: RefCell<Option<u32>>,
-    chunk_map: RefCell<Option<Mmap>>,
+    pool_head: Option<PoolHead>,
+    actual_size: Option<ActualSize>,
+    chunk_id: Option<u32>,
+    chunk_map: Option<Mmap>,
+    next_pkt_offset: Option<u32>,
 }
 
 impl ChunkPoolSearch {
@@ -630,21 +630,21 @@ impl ChunkPoolSearch {
 
         ChunkPoolSearch {
             pool_path: path,
-            pool_head: RefCell::new(None),
-            actual_size: RefCell::new(None),
-            chunk_id: RefCell::new(None),
-            chunk_map: RefCell::new(None),
-            next_pkt_offset: RefCell::new(None),
+            pool_head: None,
+            actual_size: None,
+            chunk_id: None,
+            chunk_map: None,
+            next_pkt_offset: None,
         }
     }
 
-    pub fn load_chunk(&self, chunk_id: u32, offset: u32) -> Result<(), StoreError> {
-        if self.chunk_map.borrow().is_some() && self.chunk_id.borrow().unwrap() == chunk_id {
-            *self.next_pkt_offset.borrow_mut() = Some(offset);
+    pub fn load_chunk(&mut self, chunk_id: u32, offset: u32) -> Result<(), StoreError> {
+        if self.chunk_map.is_some() && self.chunk_id.unwrap() == chunk_id {
+            self.next_pkt_offset = Some(offset);
             return Ok(());
         }
 
-        if self.pool_head.borrow().is_none() {
+        if self.pool_head.is_none() {
             let mut head_path = PathBuf::new();
             head_path.push(&self.pool_path);
             head_path.push("pool.pl");
@@ -654,13 +654,13 @@ impl ChunkPoolSearch {
                 pool_head.file_size,
                 pool_head.chunk_size,
             );
-            *self.pool_head.borrow_mut() = Some(pool_head);
-            *self.actual_size.borrow_mut() = Some(actual_size);
+            self.pool_head = Some(pool_head);
+            self.actual_size = Some(actual_size);
         }
-        *self.chunk_id.borrow_mut() = Some(chunk_id);
-        *self.next_pkt_offset.borrow_mut() = Some(offset);
+        self.chunk_id = Some(chunk_id);
+        self.next_pkt_offset = Some(offset);
 
-        let file_chunk_num = self.actual_size.borrow().as_ref().unwrap().file_chunk_num;
+        let file_chunk_num = self.actual_size.unwrap().file_chunk_num;
         let data_file_id = chunk_id / file_chunk_num;
         let data_file_path = self.pool_path.join(format!("{:03}.da", data_file_id));
         let data_file = match OpenOptions::new()
@@ -676,10 +676,10 @@ impl ChunkPoolSearch {
             }
         };
         let inner_chunk_id = chunk_id - data_file_id * file_chunk_num;
-        let chunk_size = self.pool_head.borrow().as_ref().unwrap().chunk_size;
+        let chunk_size = self.pool_head.unwrap().chunk_size;
         let offset = inner_chunk_id * chunk_size;
         match get_chunk(&data_file, offset, chunk_size as usize) {
-            Ok(mmap) => *self.chunk_map.borrow_mut() = Some(mmap),
+            Ok(mmap) => self.chunk_map = Some(mmap),
             Err(e) => {
                 return Err(StoreError::CliError(format!("map chunk error: {}", e)));
             }
@@ -687,21 +687,18 @@ impl ChunkPoolSearch {
         Ok(())
     }
 
-    pub fn next_pkt(&self) -> Option<StorePacket> {
-        if self.next_pkt_offset.borrow().is_none() {
-            return None;
-        }
+    pub fn next_pkt(&mut self) -> Option<StorePacket> {
+        self.next_pkt_offset?;
 
-        let offset = self.next_pkt_offset.borrow().unwrap() as usize;
-        let binding = self.chunk_map.borrow();
-        let chunk = binding.as_ref().unwrap();
+        let offset = self.next_pkt_offset.unwrap() as usize;
+        let chunk = self.chunk_map.as_ref().unwrap();
         let mut cursor = Cursor::new(&chunk[offset..]);
 
         if let Ok(pkt) = StorePacket::deserialize_from(&mut cursor) {
             if pkt.next_offset == 0 {
-                *self.next_pkt_offset.borrow_mut() = None;
+                self.next_pkt_offset = None;
             } else {
-                *self.next_pkt_offset.borrow_mut() = Some(pkt.next_offset);
+                self.next_pkt_offset = Some(pkt.next_offset);
             }
             return Some(pkt);
         }

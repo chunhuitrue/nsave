@@ -163,57 +163,6 @@ pub fn dump_timeindex_file(path: PathBuf) -> Result<(), StoreError> {
     Ok(())
 }
 
-// pub fn search_ti_only(search_key: SearchKey) -> Vec<LinkRecord> {
-//     let mut record: Vec<LinkRecord> = Vec::new();
-//     for dir_id in 0..THREAD_NUM {
-//         let mut ti_set = HashSet::new();
-//         let mut search_time = search_key.start_time.unwrap();
-//         while search_time < search_key.end_time.unwrap() {
-//             if let Ok((ti_file, _ti_file_path)) = time2file_ti(search_time, dir_id) {
-//                 let tis = search_ti_file(search_key, ti_file);
-//                 for ti in tis {
-//                     ti_set.insert(ti);
-//                 }
-//             }
-//             search_time += Duration::try_minutes(1).unwrap();
-//         }
-//         let mut dir_ti: Vec<LinkRecord> = ti_set.into_iter().collect();
-//         record.append(&mut dir_ti);
-//     }
-//     record
-// }
-
-// pub fn search_ti(search_key: SearchKey) -> Vec<LinkRecord> {
-//     println!("{}", search_key);
-//     let mut record: Vec<LinkRecord> = Vec::new();
-//     for dir_id in 0..THREAD_NUM {
-//         let mut search_time = search_key.start_time.unwrap();
-//         while search_time < search_key.end_time.unwrap() {
-//             if let Ok((ti_file, _ti_file_path)) = time2file_ti(search_time, dir_id) {
-//                 let mut file_record = search_ti_file(search_key, ti_file);
-//                 record.append(&mut file_record);
-//             }
-//             search_time += Duration::try_minutes(1).unwrap();
-//         }
-//     }
-//     record
-// }
-
-// pub fn old_search_ti_dir(search_key: SearchKey, dir_id: u64) -> Vec<LinkRecord> {
-//     let mut ti_set = HashSet::new();
-//     let mut search_time = search_key.start_time.unwrap();
-//     while search_time < search_key.end_time.unwrap() {
-//         if let Ok((ti_file, _ti_file_path)) = time2file_ti(search_time, dir_id) {
-//             let tis = search_ti_file(search_key, ti_file);
-//             for ti in tis {
-//                 ti_set.insert(ti);
-//             }
-//         }
-//         search_time += Duration::try_minutes(1).unwrap();
-//     }
-//     ti_set.into_iter().collect()
-// }
-
 pub fn ti_search(search_key: SearchKey, dir_id: u64) -> Vec<LinkRecord> {
     let mut ti_set = HashSet::new();
     let mut search_date = search_key.start_time.unwrap();

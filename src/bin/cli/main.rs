@@ -270,7 +270,7 @@ fn dump(ti: Vec<LinkRecord>, pcap_file: &Path, dir_id: u64) -> Result<(), StoreE
         let capture = capture.unwrap();
         let mut savefile = capture.savefile(pcap_file).unwrap();
 
-        let cp_search = ChunkPoolSearch::new(dir_id);
+        let mut cp_search = ChunkPoolSearch::new(dir_id);
         let mut rd_set: HashSet<PacketKey> = ti.iter().map(|rd| rd.tuple5).collect();
         let mut search_date = ts_date(mini_ti.start_time).naive_local();
         let date_end = Local::now().naive_local();
