@@ -8,6 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub const THREAD_NUM: u64 = 2;
 pub const STORE_PATH: &str = "/Users/lch/misc/nsave_data/";
 pub const MINUTE_NS: u128 = 1_000_000_000 * 60; // 一分钟
+pub const PACKET_LEN: i32 = 2000;
 
 #[derive(Debug)]
 pub enum StoreError {

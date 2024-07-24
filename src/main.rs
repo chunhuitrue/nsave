@@ -23,17 +23,20 @@ const WRITER_EMPTY_SLEEP: u64 = 5;
 const AIDE_EMPTY_SLEEP: u64 = 100;
 
 fn main() {
-    let pcap_file;
+    let mut pcap_file = None;
+    let mut pcap_interface = None;
 
     let matches = cli().get_matches();
-    if let Some(pcap) = matches.get_one::<PathBuf>("pcap") {
-        println!("pcap file: {}", pcap.display());
-        pcap_file = pcap;
-    } else {
-        return;
-    }
     if let Some(config_path) = matches.get_one::<PathBuf>("config") {
         println!("config file: {}", config_path.display());
+    }
+    if let Some(interface) = matches.get_one::<String>("interface") {
+        println!("interface: {}", interface);
+        pcap_interface = Some(interface);
+    }
+    if let Some(pcapfile) = matches.get_one::<PathBuf>("file") {
+        println!("pcap file: {}", pcapfile.display());
+        pcap_file = Some(pcapfile);
     }
     // match matches
     //     .get_one::<u8>("debug")
@@ -79,8 +82,15 @@ fn main() {
         aide_thread(barrier_aide, running_aide, msg_rxs);
     });
 
-    let mut capture = Capture::init(pcap_file).unwrap();
+    let mut capture = match Capture::init_capture(pcap_interface, pcap_file) {
+        Ok(cap) => cap,
+        Err(e) => {
+            println!("capture error {:?}", e);
+            return;
+        }
+    };
     barrier.wait();
+
     while running.load(Ordering::Relaxed) {
         let now = timenow();
         let pkt = capture.next_packet(now);
@@ -105,7 +115,9 @@ fn main() {
             }
         }
 
-        thread::sleep(Duration::from_millis(1)); // todo: del.调试用
+        if pcap_file.is_some() {
+            thread::sleep(Duration::from_millis(1));
+        }
     }
 
     running.store(false, Ordering::Relaxed);
@@ -133,12 +145,13 @@ fn cli() -> Command {
                 .required(false)
                 .value_parser(value_parser!(PathBuf)),
         )
-        .arg(arg!(-d --debug ... "Turn debugging information on").required(false))
         .arg(
-            arg!(-p --pcap <PCAPFILE> "load pcapfile")
-                .required(true)
+            arg!(-f --file <FILE> "load pcap file")
+                .required(false)
                 .value_parser(value_parser!(PathBuf)),
         )
+        .arg(arg!(-i --interface <INTERFACE> ... "listen interface").required(false))
+        .arg(arg!(-d --debug ... "Turn debugging information on").required(false))
 }
 
 fn writer_thread(
