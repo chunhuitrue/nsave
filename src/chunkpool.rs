@@ -310,7 +310,7 @@ impl ChunkPool {
 
     fn wlock_pool_head(&self) -> Result<(), StoreError> {
         let mut lock = libc::flock {
-            l_type: libc::F_WRLCK,
+            l_type: libc::F_WRLCK as _,
             l_whence: libc::SEEK_SET as i16,
             l_start: 0,
             l_len: PoolHead::serialize_size() as i64,
@@ -331,7 +331,7 @@ impl ChunkPool {
 
     fn unlock_pool_head(&self) -> Result<(), StoreError> {
         let mut lock = libc::flock {
-            l_type: libc::F_UNLCK,
+            l_type: libc::F_UNLCK as _,
             l_whence: libc::SEEK_SET as i16,
             l_start: 0,
             l_len: PoolHead::serialize_size() as i64,
@@ -352,7 +352,7 @@ impl ChunkPool {
 
     fn wlock_chunk(&self) -> Result<(), StoreError> {
         let mut lock = libc::flock {
-            l_type: libc::F_WRLCK,
+            l_type: libc::F_WRLCK as _,
             l_whence: libc::SEEK_SET as i16,
             l_start: *self.chunk_offset.borrow() as i64,
             l_len: self.chunk_size as i64,
@@ -373,7 +373,7 @@ impl ChunkPool {
 
     fn unlock_chunk(&self) -> Result<(), StoreError> {
         let mut lock = libc::flock {
-            l_type: libc::F_UNLCK,
+            l_type: libc::F_UNLCK as _,
             l_whence: libc::SEEK_SET as i16,
             l_start: *self.chunk_offset.borrow() as i64,
             l_len: self.chunk_size as i64,
@@ -718,7 +718,7 @@ fn read_pool_head(path: &PathBuf) -> Result<PoolHead, StoreError> {
 
     let mut fd = File::open(path)?;
     let mut lock = libc::flock {
-        l_type: libc::F_RDLCK,
+        l_type: libc::F_RDLCK as _,
         l_whence: libc::SEEK_SET as i16,
         l_start: 0,
         l_len: PoolHead::serialize_size() as i64,
@@ -733,7 +733,7 @@ fn read_pool_head(path: &PathBuf) -> Result<PoolHead, StoreError> {
 
     let pool_head = PoolHead::deserialize_from(&mut fd)?;
 
-    lock.l_type = libc::F_UNLCK;
+    lock.l_type = libc::F_UNLCK as _;
     let result = unsafe { fcntl(fd.as_raw_fd(), F_SETLK, &mut lock) };
     if result == -1 {
         return Err(StoreError::LockError("unlock pool head error".to_string()));
@@ -822,7 +822,7 @@ pub fn dump_data_file(da_path: PathBuf) -> Result<(), StoreError> {
 
 fn get_chunk(fd: &File, offset: u32, len: usize) -> Result<Mmap, StoreError> {
     let mut lock = libc::flock {
-        l_type: libc::F_RDLCK,
+        l_type: libc::F_RDLCK as _,
         l_whence: libc::SEEK_SET as i16,
         l_start: offset as i64,
         l_len: len as i64,
@@ -839,7 +839,7 @@ fn get_chunk(fd: &File, offset: u32, len: usize) -> Result<Mmap, StoreError> {
 
 fn free_chunk(fd: &File, offset: u32, len: usize) -> Result<(), StoreError> {
     let mut lock = libc::flock {
-        l_type: libc::F_UNLCK,
+        l_type: libc::F_UNLCK as _,
         l_whence: libc::SEEK_SET as i16,
         l_start: offset as i64,
         l_len: len as i64,

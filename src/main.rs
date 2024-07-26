@@ -195,7 +195,7 @@ fn writer_thread(
                     }
 
                     if node.is_fin() {
-                        println!("thread {}. node is fin", writer_id);
+                        // println!("thread {}. node is fin", writer_id);
                         remove_key = Some(node.key);
 
                         let _ = store.link_fin(&node.key, node.start_time, now);

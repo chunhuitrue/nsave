@@ -77,15 +77,7 @@ impl Store {
         pkt: Arc<Packet>,
         now: u128,
     ) -> Result<(), StoreError> {
-        if self.current_dir.borrow().is_none() {
-            self.mk_time_dir(now)?;
-            self.chunk_index
-                .borrow_mut()
-                .init_dir(self.current_dir.borrow().as_ref().unwrap())?;
-            self.time_index
-                .borrow_mut()
-                .init_dir(self.current_dir.borrow().as_ref().unwrap())?;
-        }
+        self.init_dir(now)?;
 
         let ctx = flow_node.store_ctx.as_ref().unwrap();
         let pkt_offset = self.chunk_pool.write(pkt, now, |pool_path, end_time| {
@@ -134,11 +126,13 @@ impl Store {
         &self,
         tuple5: &PacketKey,
         start_time: u128,
-        end_time: u128,
+        now: u128,
     ) -> Result<(), StoreError> {
+        self.init_dir(now)?;
+
         let ci_offset = self.chunk_index.borrow_mut().write(ChunkIndexRd {
             start_time,
-            end_time,
+            end_time: now,
             chunk_id: 0,
             chunk_offset: 0,
             tuple5: *tuple5,
@@ -147,7 +141,7 @@ impl Store {
         if let Ok(offset) = ci_offset {
             self.time_index.borrow_mut().write(LinkRecord {
                 start_time,
-                end_time,
+                end_time: now,
                 tuple5: *tuple5,
                 ci_offset: offset,
             })?;
@@ -172,6 +166,19 @@ impl Store {
             self.time_index.borrow_mut().change_dir()?;
 
             *self.current_dir.borrow_mut() = None;
+        }
+        Ok(())
+    }
+
+    fn init_dir(&self, now: u128) -> Result<(), StoreError> {
+        if self.current_dir.borrow().is_none() {
+            self.mk_time_dir(now)?;
+            self.chunk_index
+                .borrow_mut()
+                .init_dir(self.current_dir.borrow().as_ref().unwrap())?;
+            self.time_index
+                .borrow_mut()
+                .init_dir(self.current_dir.borrow().as_ref().unwrap())?;
         }
         Ok(())
     }

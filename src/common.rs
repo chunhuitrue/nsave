@@ -86,7 +86,7 @@ pub fn ts_timeval(timestamp: u128) -> timeval {
     let nanoseconds = (timestamp % 1_000_000_000) as i64;
     timeval {
         tv_sec: seconds,
-        tv_usec: (nanoseconds * 1000) as i32,
+        tv_usec: (nanoseconds * 1000) as _,
     }
 }
 

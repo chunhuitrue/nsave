@@ -51,7 +51,7 @@ impl MmapBufWriter {
 
     fn lock_mmap(&self) -> Result<(), StoreError> {
         let mut lock = libc::flock {
-            l_type: libc::F_WRLCK,
+            l_type: libc::F_WRLCK as _,
             l_whence: libc::SEEK_SET as i16,
             l_start: (self.file_len - self.conf_buf_len) as i64,
             l_len: self.conf_buf_len as i64,
@@ -66,7 +66,7 @@ impl MmapBufWriter {
 
     fn unlock_mmap(&self) -> Result<(), StoreError> {
         let mut lock = libc::flock {
-            l_type: libc::F_UNLCK,
+            l_type: libc::F_UNLCK as _,
             l_whence: libc::SEEK_SET as i16,
             l_start: (self.file_len - self.conf_buf_len) as i64,
             l_len: self.conf_buf_len as i64,
@@ -186,7 +186,7 @@ impl MmapBufReader {
 
     fn lock_mmap(&self) -> Result<(), StoreError> {
         let mut lock = libc::flock {
-            l_type: libc::F_RDLCK,
+            l_type: libc::F_RDLCK as _,
             l_whence: libc::SEEK_SET as i16,
             l_start: (*self.next_offset.borrow() - *self.map_len.borrow()) as i64,
             l_len: *self.map_len.borrow() as i64,
@@ -201,7 +201,7 @@ impl MmapBufReader {
 
     fn unlock_mmap(&self) -> Result<(), StoreError> {
         let mut lock = libc::flock {
-            l_type: libc::F_UNLCK,
+            l_type: libc::F_UNLCK as _,
             l_whence: libc::SEEK_SET as i16,
             l_start: (*self.next_offset.borrow() - *self.map_len.borrow()) as i64,
             l_len: *self.map_len.borrow() as i64,
