@@ -3,6 +3,7 @@ use clap::{arg, value_parser, Command};
 use libnsave::chunkindex::*;
 use libnsave::chunkpool::*;
 use libnsave::common::*;
+use libnsave::configure::*;
 use libnsave::packet::*;
 use libnsave::timeindex::*;
 use pcap::Capture as PcapCapture;
@@ -15,9 +16,14 @@ use std::path::Path;
 use std::path::PathBuf;
 
 fn main() -> Result<(), StoreError> {
+    let configure;
+
     let matches = cli().get_matches();
     if let Some(config_path) = matches.get_one::<PathBuf>("config") {
         println!("config file: {}", config_path.display());
+        configure = Configure::load(config_path)?;
+    } else {
+        return Err(StoreError::OpenError("configure file error".to_string()));
     }
     // let mut debug_level: u8 = 0;
     // match matches
@@ -87,9 +93,9 @@ fn main() -> Result<(), StoreError> {
             };
 
             if let Some(file) = sub_matches.get_one::<String>("pcap_file") {
-                search_dump(search_key, file.into())?;
+                search_dump(configure, search_key, file.into())?;
             } else {
-                search_only(search_key);
+                search_only(configure, search_key);
             };
             Ok(())
         }
@@ -108,7 +114,7 @@ fn cli() -> Command {
         .allow_external_subcommands(true)
         .arg(
             arg!(-c --config <FILE> "Sets a custom config file")
-                .required(false)
+                .required(true)
                 .value_parser(value_parser!(PathBuf)),
         )
         .arg(arg!(-d --debug ... "Turn debugging information on"))
@@ -231,9 +237,9 @@ fn parse_protocol(protocol: &str) -> Result<TransProto, String> {
     }
 }
 
-fn search_only(search_key: SearchKey) {
-    for dir_id in 0..THREAD_NUM {
-        let dir_ti = ti_search(search_key, dir_id);
+fn search_only(configure: &'static Configure, search_key: SearchKey) {
+    for dir_id in 0..configure.thread_num {
+        let dir_ti = ti_search(configure, search_key, dir_id);
         if dir_ti.is_empty() {
             continue;
         }
@@ -245,9 +251,13 @@ fn search_only(search_key: SearchKey) {
     }
 }
 
-fn search_dump(search_key: SearchKey, pcap_file: PathBuf) -> Result<(), StoreError> {
-    for dir_id in 0..THREAD_NUM {
-        let dir_ti = ti_search(search_key, dir_id);
+fn search_dump(
+    configure: &'static Configure,
+    search_key: SearchKey,
+    pcap_file: PathBuf,
+) -> Result<(), StoreError> {
+    for dir_id in 0..configure.thread_num {
+        let dir_ti = ti_search(configure, search_key, dir_id);
         if dir_ti.is_empty() {
             continue;
         }
@@ -256,12 +266,17 @@ fn search_dump(search_key: SearchKey, pcap_file: PathBuf) -> Result<(), StoreErr
         for ti in &dir_ti {
             println!("{}", ti);
         }
-        dump(dir_ti, &pcap_file, dir_id)?;
+        dump(configure, dir_ti, &pcap_file, dir_id)?;
     }
     Ok(())
 }
 
-fn dump(ti: Vec<LinkRecord>, pcap_file: &Path, dir_id: u64) -> Result<(), StoreError> {
+fn dump(
+    configure: &'static Configure,
+    ti: Vec<LinkRecord>,
+    pcap_file: &Path,
+    dir_id: u64,
+) -> Result<(), StoreError> {
     if let Some(mini_ti) = &ti.iter().min_by_key(|ti| ti.start_time) {
         let capture = PcapCapture::dead(Linktype::ETHERNET);
         if capture.is_err() {
@@ -270,12 +285,12 @@ fn dump(ti: Vec<LinkRecord>, pcap_file: &Path, dir_id: u64) -> Result<(), StoreE
         let capture = capture.unwrap();
         let mut savefile = capture.savefile(pcap_file).unwrap();
 
-        let mut cp_search = ChunkPoolSearch::new(dir_id);
+        let mut cp_search = ChunkPoolSearch::new(configure, dir_id);
         let mut rd_set: HashSet<PacketKey> = ti.iter().map(|rd| rd.tuple5).collect();
         let mut search_date = ts_date(mini_ti.start_time).naive_local();
         let date_end = Local::now().naive_local();
         while search_date < date_end && !rd_set.is_empty() {
-            let dir = date2dir(dir_id, search_date);
+            let dir = date2dir(configure, dir_id, search_date);
             if dir.exists() {
                 if let Some(link_rd) = search_lr(&dir, mini_ti.tuple5) {
                     let mut ci_search = ChunkIndexSearch::new(&dir, link_rd.ci_offset);

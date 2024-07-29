@@ -1,6 +1,7 @@
 use crate::chunkindex::*;
 use crate::chunkpool::*;
 use crate::common::*;
+use crate::configure::*;
 use crate::flow::FlowNode;
 use crate::packet::*;
 use crate::timeindex::*;
@@ -11,10 +12,6 @@ use std::{
     path::{Path, PathBuf},
     sync::{mpsc::SyncSender, Arc},
 };
-
-const POOL_SIZE: u64 = 1024 * 1024 * 16; // 16M
-const FILE_SIZE: u64 = 1024 * 1024 * 2; // 2M
-const CHUNK_SIZE: u32 = 1024 * 80; // 80k
 
 #[derive(Debug)]
 pub struct StoreCtx {
@@ -54,15 +51,24 @@ pub struct Store {
 }
 
 impl Store {
-    pub fn new(store_dir: PathBuf, msg_channel: SyncSender<Msg>) -> Self {
+    pub fn new(
+        configure: &'static Configure,
+        store_dir: PathBuf,
+        msg_channel: SyncSender<Msg>,
+    ) -> Self {
         Store {
             store_dir: store_dir.clone(),
             current_dir: RefCell::new(None),
             current_dir_date: RefCell::new(ts_date(0)),
-            chunk_pool: ChunkPool::new(store_dir, POOL_SIZE, FILE_SIZE, CHUNK_SIZE),
+            chunk_pool: ChunkPool::new(
+                store_dir,
+                configure.pool_size,
+                configure.file_size,
+                configure.chunk_size,
+            ),
             msg_channel,
-            chunk_index: RefCell::new(ChunkIndex::new()),
-            time_index: RefCell::new(TimeIndex::new()),
+            chunk_index: RefCell::new(ChunkIndex::new(configure)),
+            time_index: RefCell::new(TimeIndex::new(configure)),
         }
     }
 

@@ -1,4 +1,5 @@
 use crate::common::*;
+use crate::configure::*;
 use crate::mmapbuf::*;
 use crate::packet::*;
 use bincode::deserialize_from;
@@ -10,16 +11,18 @@ use std::{
     path::{Path, PathBuf},
 };
 
-const BUFF_SIZE: u64 = 1024;
-
 #[derive(Debug)]
 pub struct ChunkIndex {
+    configure: &'static Configure,
     buf_writer: Option<MmapBufWriter>,
 }
 
 impl ChunkIndex {
-    pub fn new() -> Self {
-        ChunkIndex { buf_writer: None }
+    pub fn new(configure: &'static Configure) -> Self {
+        ChunkIndex {
+            configure,
+            buf_writer: None,
+        }
     }
 
     pub fn init_dir(&mut self, dir: &Path) -> Result<(), StoreError> {
@@ -35,7 +38,11 @@ impl ChunkIndex {
         match result {
             Ok(fd) => {
                 let meta = fd.metadata()?;
-                self.buf_writer = Some(MmapBufWriter::with_arg(fd, meta.len(), BUFF_SIZE));
+                self.buf_writer = Some(MmapBufWriter::with_arg(
+                    fd,
+                    meta.len(),
+                    self.configure.ci_buff_size,
+                ));
             }
             Err(e) => return Err(StoreError::IoError(e)),
         }
@@ -57,12 +64,6 @@ impl ChunkIndex {
             }
         }
         Ok(ci_offset)
-    }
-}
-
-impl Default for ChunkIndex {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

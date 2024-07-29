@@ -2,6 +2,7 @@ pub mod capture;
 pub mod chunkindex;
 pub mod chunkpool;
 pub mod common;
+pub mod configure;
 pub mod flow;
 pub mod mmapbuf;
 pub mod packet;

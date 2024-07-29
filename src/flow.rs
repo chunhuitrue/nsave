@@ -20,13 +20,13 @@ pub struct FlowNode {
 }
 
 impl FlowNode {
-    fn new(key: PacketKey, now: u128) -> Self {
+    fn new(key: PacketKey, now: u128, max_seq_gap: usize) -> Self {
         FlowNode {
             key,
             start_time: now,
             last_time: now,
-            seq_strm1: SeqStream::new(),
-            seq_strm2: SeqStream::new(),
+            seq_strm1: SeqStream::new_with_arg(max_seq_gap),
+            seq_strm2: SeqStream::new_with_arg(max_seq_gap),
             store_ctx: None,
         }
     }
@@ -83,9 +83,17 @@ struct SeqStream {
 }
 
 impl SeqStream {
+    #[allow(dead_code)]
     fn new() -> Self {
         SeqStream {
             segment: Vec::with_capacity(MAX_SEQ_GAP),
+            fin: false,
+        }
+    }
+
+    fn new_with_arg(max_seq_gap: usize) -> Self {
+        SeqStream {
+            segment: Vec::with_capacity(max_seq_gap),
             fin: false,
         }
     }
@@ -195,13 +203,25 @@ impl SeqStream {
 }
 
 pub struct Flow {
+    node_timeout: u128,
+    max_seq_gap: usize,
     table: TmoHash<PacketKey, FlowNode>,
 }
 
 impl Flow {
     pub fn new() -> Self {
         Flow {
+            node_timeout: NODE_TIMEOUT,
+            max_seq_gap: MAX_SEQ_GAP,
             table: TmoHash::new(MAX_TABLE_CAPACITY),
+        }
+    }
+
+    pub fn new_with_arg(max_table_capacity: usize, node_timeout: u128, max_seq_gap: usize) -> Self {
+        Flow {
+            node_timeout,
+            max_seq_gap,
+            table: TmoHash::new(max_table_capacity),
         }
     }
 
@@ -215,7 +235,8 @@ impl Flow {
         if self.contains_key(&key) {
             return None;
         }
-        self.table.insert(key, FlowNode::new(key, now))
+        self.table
+            .insert(key, FlowNode::new(key, now, self.max_seq_gap))
     }
 
     // 返回插入节点的可变引用。如果已经存在，返回None
@@ -224,7 +245,8 @@ impl Flow {
         if self.contains_key(&key) {
             return None;
         }
-        self.table.insert_mut(key, FlowNode::new(key, now))
+        self.table
+            .insert_mut(key, FlowNode::new(key, now, self.max_seq_gap))
     }
 
     // 返回packet所在节点的引用。如果不存在，返回None
@@ -295,7 +317,7 @@ impl Flow {
         F: Fn(&FlowNode),
     {
         self.table.timeout(|_key, node| {
-            if now - node.last_time >= NODE_TIMEOUT {
+            if now - node.last_time >= self.node_timeout {
                 fun(node);
                 true
             } else {
@@ -633,7 +655,7 @@ mod tests {
         let _ = pkt_s2c.decode();
         let pkt_s2c_fin = build_fin([2, 2, 2, 2], [1, 1, 1, 1], 80, 333, 12);
         let _ = pkt_s2c_fin.decode();
-        let mut node = FlowNode::new(pkt_c2s.hash_key(), 888);
+        let mut node = FlowNode::new(pkt_c2s.hash_key(), 888, MAX_SEQ_GAP);
 
         assert_eq!(888, node.last_time);
         assert_eq!(pkt_c2s.hash_key(), node.key);

@@ -1,4 +1,5 @@
 use crate::common::*;
+use crate::configure::*;
 use crate::mmapbuf::*;
 use crate::packet::*;
 use bincode::deserialize_from;
@@ -14,16 +15,18 @@ use std::{
     path::{Path, PathBuf},
 };
 
-const BUFF_SIZE: u64 = 1024;
-
 #[derive(Debug)]
 pub struct TimeIndex {
+    configure: &'static Configure,
     buf_writer: Option<MmapBufWriter>,
 }
 
 impl TimeIndex {
-    pub fn new() -> Self {
-        TimeIndex { buf_writer: None }
+    pub fn new(configure: &'static Configure) -> Self {
+        TimeIndex {
+            configure,
+            buf_writer: None,
+        }
     }
 
     pub fn init_dir(&mut self, dir: &Path) -> Result<(), StoreError> {
@@ -39,7 +42,11 @@ impl TimeIndex {
         match result {
             Ok(fd) => {
                 let meta = fd.metadata()?;
-                self.buf_writer = Some(MmapBufWriter::with_arg(fd, meta.len(), BUFF_SIZE));
+                self.buf_writer = Some(MmapBufWriter::with_arg(
+                    fd,
+                    meta.len(),
+                    self.configure.ti_buff_size,
+                ));
             }
             Err(e) => return Err(StoreError::IoError(e)),
         }
@@ -59,12 +66,6 @@ impl TimeIndex {
             }
         }
         Ok(ci_offset)
-    }
-}
-
-impl Default for TimeIndex {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -163,11 +164,15 @@ pub fn dump_timeindex_file(path: PathBuf) -> Result<(), StoreError> {
     Ok(())
 }
 
-pub fn ti_search(search_key: SearchKey, dir_id: u64) -> Vec<LinkRecord> {
+pub fn ti_search(
+    configure: &'static Configure,
+    search_key: SearchKey,
+    dir_id: u64,
+) -> Vec<LinkRecord> {
     let mut ti_set = HashSet::new();
     let mut search_date = search_key.start_time.unwrap();
     while search_date < search_key.end_time.unwrap() {
-        if let Ok((ti_file, _ti_file_path)) = date2file_ti(search_date, dir_id) {
+        if let Ok((ti_file, _ti_file_path)) = date2file_ti(configure, search_date, dir_id) {
             ti_set = search_ti(search_key, ti_file)
                 .into_iter()
                 .collect::<HashSet<_>>();
@@ -177,9 +182,13 @@ pub fn ti_search(search_key: SearchKey, dir_id: u64) -> Vec<LinkRecord> {
     ti_set.into_iter().collect()
 }
 
-fn date2file_ti(date: NaiveDateTime, dir: u64) -> Result<(File, PathBuf), StoreError> {
+fn date2file_ti(
+    configure: &'static Configure,
+    date: NaiveDateTime,
+    dir: u64,
+) -> Result<(File, PathBuf), StoreError> {
     let mut path = PathBuf::new();
-    path.push(STORE_PATH);
+    path.push(configure.store_path.clone());
     path.push(format!("{:03}", dir));
     path.push(format!("{:04}", date.year()));
     path.push(format!("{:02}", date.month()));

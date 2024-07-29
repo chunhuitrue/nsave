@@ -1,9 +1,8 @@
-use crate::common::*;
+use crate::configure::*;
 use crate::packet::*;
 use pcap::Activated;
 use pcap::Capture as PcapCap;
 use pcap::Device;
-use std::path::Path;
 use std::sync::Arc;
 
 #[derive(Debug)]
@@ -16,29 +15,28 @@ pub struct Capture {
 }
 
 impl Capture {
-    pub fn init_capture<P: AsRef<Path>>(
-        interface: Option<&String>,
-        path: Option<P>,
-    ) -> Result<Capture, CaptureError> {
-        if let Some(pcap_file) = path {
-            return Ok(Self::init_from_file(pcap_file).unwrap());
+    pub fn init_capture(configure: &'static Configure) -> Result<Capture, CaptureError> {
+        if configure.pcap_file.is_some() {
+            return Ok(Self::init_from_file(configure).unwrap());
         }
-        Self::init_interface(interface)
+        Self::init_interface(configure)
     }
 
-    fn init_from_file<P: AsRef<Path>>(path: P) -> Result<Capture, CaptureError> {
+    fn init_from_file(configure: &'static Configure) -> Result<Capture, CaptureError> {
         let capture = Capture {
-            cap: PcapCap::from_file(path).unwrap().into(),
+            cap: PcapCap::from_file(configure.pcap_file.as_ref().unwrap())
+                .unwrap()
+                .into(),
         };
         Ok(capture)
     }
 
-    fn init_interface(interface: Option<&String>) -> Result<Capture, CaptureError> {
-        let device = Self::get_device(interface)?;
+    fn init_interface(configure: &'static Configure) -> Result<Capture, CaptureError> {
+        let device = Self::get_device(Some(&configure.interface))?;
         let cap = pcap::Capture::from_device(device)
             .unwrap()
             .promisc(true)
-            .snaplen(PACKET_LEN)
+            .snaplen(configure.pkt_len)
             .immediate_mode(true)
             .open()
             .unwrap();

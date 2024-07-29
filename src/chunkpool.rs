@@ -1,4 +1,5 @@
 use crate::common::*;
+use crate::configure::*;
 use crate::packet::*;
 use chrono::{DateTime, Datelike, Local, Timelike};
 use libc::{fcntl, F_SETLK, F_SETLKW};
@@ -622,9 +623,9 @@ pub struct ChunkPoolSearch {
 }
 
 impl ChunkPoolSearch {
-    pub fn new(dir_id: u64) -> Self {
+    pub fn new(configure: &'static Configure, dir_id: u64) -> Self {
         let mut path = PathBuf::new();
-        path.push(STORE_PATH);
+        path.push(configure.store_path.clone());
         path.push(format!("{:03}", dir_id));
         path.push("chunk_pool");
 
