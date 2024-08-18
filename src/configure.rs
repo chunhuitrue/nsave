@@ -7,6 +7,7 @@ use std::path::Path;
 pub struct Configure {
     pub interface: String,
     pub pkt_len: i32,
+    pub filter: Option<String>,
     pub pcap_file: Option<String>,
     pub store_path: String,
     pub thread_num: u64,

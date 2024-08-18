@@ -23,23 +23,36 @@ impl Capture {
     }
 
     fn init_from_file(configure: &'static Configure) -> Result<Capture, CaptureError> {
-        let capture = Capture {
-            cap: PcapCap::from_file(configure.pcap_file.as_ref().unwrap())
-                .unwrap()
-                .into(),
-        };
+        let mut cap = PcapCap::from_file(configure.pcap_file.as_ref().unwrap()).unwrap();
+        if configure.filter.is_some() {
+            let res = cap.filter(configure.filter.as_ref().unwrap(), true);
+            if res.is_err() {
+                println!("capture filter error {:?}", res);
+                return Err(CaptureError::CapErr);
+            }
+        }
+
+        let capture = Capture { cap: cap.into() };
         Ok(capture)
     }
 
     fn init_interface(configure: &'static Configure) -> Result<Capture, CaptureError> {
         let device = Self::get_device(Some(&configure.interface))?;
-        let cap = pcap::Capture::from_device(device)
+        let mut cap = pcap::Capture::from_device(device)
             .unwrap()
             .promisc(true)
             .snaplen(configure.pkt_len)
             .immediate_mode(true)
             .open()
             .unwrap();
+        if configure.filter.is_some() {
+            let res = cap.filter(configure.filter.as_ref().unwrap(), true);
+            if res.is_err() {
+                println!("capture filter error {:?}", res);
+                return Err(CaptureError::CapErr);
+            }
+        }
+
         let capture = Capture { cap: cap.into() };
         Ok(capture)
     }

@@ -1,5 +1,6 @@
 interface = "en1"
 pkt_len = 2000
+filter = "tcp"
 
 # pcap_file = "~/misc/https.pcap"
 store_path = "/Users/lch/misc/nsave_data/"
