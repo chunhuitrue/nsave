@@ -2,8 +2,9 @@ use crate::common::*;
 use crate::configure::*;
 use crate::mmapbuf::*;
 use crate::packet::*;
+use crate::search_ti::*;
 use bincode::deserialize_from;
-use chrono::{Datelike, Duration, NaiveDateTime, Timelike};
+use chrono::{Duration, NaiveDateTime};
 use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
 use std::collections::HashSet;
@@ -172,7 +173,7 @@ pub fn ti_search(
     let mut ti_set = HashSet::new();
     let mut search_date = search_key.start_time.unwrap();
     while search_date < search_key.end_time.unwrap() {
-        if let Ok((ti_file, _ti_file_path)) = date2file_ti(configure, search_date, dir_id) {
+        if let Ok((ti_file, _ti_file_path)) = date2ti_file(configure, search_date, dir_id) {
             ti_set = search_ti(search_key, ti_file)
                 .into_iter()
                 .collect::<HashSet<_>>();
@@ -180,34 +181,6 @@ pub fn ti_search(
         search_date += Duration::try_minutes(1).unwrap();
     }
     ti_set.into_iter().collect()
-}
-
-fn date2file_ti(
-    configure: &'static Configure,
-    date: NaiveDateTime,
-    dir: u64,
-) -> Result<(File, PathBuf), StoreError> {
-    let mut path = PathBuf::new();
-    path.push(configure.store_path.clone());
-    path.push(format!("{:03}", dir));
-    path.push(format!("{:04}", date.year()));
-    path.push(format!("{:02}", date.month()));
-    path.push(format!("{:02}", date.day()));
-    path.push(format!("{:02}", date.hour()));
-    path.push(format!("{:02}", date.minute()));
-    path.push("timeindex.ti");
-    println!("search from file: {:?}", path);
-
-    match OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(false)
-        .truncate(false)
-        .open(&path)
-    {
-        Ok(file) => Ok((file, path)),
-        Err(e) => Err(StoreError::CliError(format!("open file error: {}", e))),
-    }
 }
 
 fn search_ti(search_key: SearchKey, ti_file: File) -> Vec<LinkRecord> {

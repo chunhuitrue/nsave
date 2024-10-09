@@ -1,5 +1,4 @@
 use crate::common::*;
-use crate::configure::*;
 use crate::packet::*;
 use chrono::{DateTime, Datelike, Local, Timelike};
 use libc::{fcntl, F_SETLK, F_SETLKW};
@@ -401,11 +400,11 @@ impl Drop for ChunkPool {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct ActualSize {
-    actual_file_size: u64,
-    actual_file_num: u32,
-    file_chunk_num: u32,
-    chunk_num: u32,
+pub struct ActualSize {
+    pub actual_file_size: u64,
+    pub actual_file_num: u32,
+    pub file_chunk_num: u32,
+    pub chunk_num: u32,
 }
 
 impl ActualSize {
@@ -437,11 +436,11 @@ impl fmt::Display for ActualSize {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct PoolHead {
-    pool_size: u64,
-    file_size: u64,
-    chunk_size: u32,
-    next_chunk_id: u32,
+pub struct PoolHead {
+    pub pool_size: u64,
+    pub file_size: u64,
+    pub chunk_size: u32,
+    pub next_chunk_id: u32,
 }
 
 impl PoolHead {
@@ -491,10 +490,10 @@ impl fmt::Display for PoolHead {
 }
 
 #[derive(Debug)]
-struct ChunkHead {
-    start_time: u128,
-    end_time: u128,
-    filled_size: u32, // 包括chunkhead在内
+pub struct ChunkHead {
+    pub start_time: u128,
+    pub end_time: u128,
+    pub filled_size: u32, // 包括chunkhead在内
 }
 
 impl ChunkHead {
@@ -531,6 +530,12 @@ impl ChunkHead {
 
     pub fn serialize_size() -> usize {
         36
+    }
+}
+
+impl Default for ChunkHead {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -612,102 +617,7 @@ impl fmt::Display for StorePacket {
     }
 }
 
-#[derive(Debug)]
-pub struct ChunkPoolSearch {
-    pool_path: PathBuf,
-    pool_head: Option<PoolHead>,
-    actual_size: Option<ActualSize>,
-    chunk_id: Option<u32>,
-    chunk_map: Option<Mmap>,
-    next_pkt_offset: Option<u32>,
-}
-
-impl ChunkPoolSearch {
-    pub fn new(configure: &'static Configure, dir_id: u64) -> Self {
-        let mut path = PathBuf::new();
-        path.push(configure.store_path.clone());
-        path.push(format!("{:03}", dir_id));
-        path.push("chunk_pool");
-
-        ChunkPoolSearch {
-            pool_path: path,
-            pool_head: None,
-            actual_size: None,
-            chunk_id: None,
-            chunk_map: None,
-            next_pkt_offset: None,
-        }
-    }
-
-    pub fn load_chunk(&mut self, chunk_id: u32, offset: u32) -> Result<(), StoreError> {
-        if self.chunk_map.is_some() && self.chunk_id.unwrap() == chunk_id {
-            self.next_pkt_offset = Some(offset);
-            return Ok(());
-        }
-
-        if self.pool_head.is_none() {
-            let mut head_path = PathBuf::new();
-            head_path.push(&self.pool_path);
-            head_path.push("pool.pl");
-            let pool_head = read_pool_head(&head_path)?;
-            let actual_size = ActualSize::new(
-                pool_head.pool_size,
-                pool_head.file_size,
-                pool_head.chunk_size,
-            );
-            self.pool_head = Some(pool_head);
-            self.actual_size = Some(actual_size);
-        }
-        self.chunk_id = Some(chunk_id);
-        self.next_pkt_offset = Some(offset);
-
-        let file_chunk_num = self.actual_size.unwrap().file_chunk_num;
-        let data_file_id = chunk_id / file_chunk_num;
-        let data_file_path = self.pool_path.join(format!("{:03}.da", data_file_id));
-        let data_file = match OpenOptions::new()
-            .read(true)
-            .write(false)
-            .create(false)
-            .truncate(false)
-            .open(data_file_path)
-        {
-            Ok(file_fd) => file_fd,
-            Err(e) => {
-                return Err(StoreError::CliError(format!("open data file error: {}", e)));
-            }
-        };
-        let inner_chunk_id = chunk_id - data_file_id * file_chunk_num;
-        let chunk_size = self.pool_head.unwrap().chunk_size;
-        let offset = inner_chunk_id * chunk_size;
-        match get_chunk(&data_file, offset, chunk_size as usize) {
-            Ok(mmap) => self.chunk_map = Some(mmap),
-            Err(e) => {
-                return Err(StoreError::CliError(format!("map chunk error: {}", e)));
-            }
-        }
-        Ok(())
-    }
-
-    pub fn next_pkt(&mut self) -> Option<StorePacket> {
-        self.next_pkt_offset?;
-
-        let offset = self.next_pkt_offset.unwrap() as usize;
-        let chunk = self.chunk_map.as_ref().unwrap();
-        let mut cursor = Cursor::new(&chunk[offset..]);
-
-        if let Ok(pkt) = StorePacket::deserialize_from(&mut cursor) {
-            if pkt.next_offset == 0 {
-                self.next_pkt_offset = None;
-            } else {
-                self.next_pkt_offset = Some(pkt.next_offset);
-            }
-            return Some(pkt);
-        }
-        None
-    }
-}
-
-fn read_pool_head(path: &PathBuf) -> Result<PoolHead, StoreError> {
+pub fn read_pool_head(path: &PathBuf) -> Result<PoolHead, StoreError> {
     match path.extension() {
         Some(ext) => {
             if !ext.to_str().unwrap().eq("pl") {
@@ -810,10 +720,10 @@ pub fn dump_data_file(da_path: PathBuf) -> Result<(), StoreError> {
 
     for chunk in 0..actual_size.file_chunk_num {
         let offset = chunk * pool_head.chunk_size;
-        if let Ok(mmap) = get_chunk(&data_file, offset, pool_head.chunk_size as usize) {
+        if let Ok(mmap) = get_lk_chunk(&data_file, offset, pool_head.chunk_size as usize) {
             let chunk_id = chunk + file_id * actual_size.file_chunk_num;
             dump_chunk_head(chunk_id, &mmap, &pool_head)?;
-            free_chunk(&data_file, offset, pool_head.chunk_size as usize)?;
+            free_lk_chunk(&data_file, offset, pool_head.chunk_size as usize)?;
         } else {
             break;
         }
@@ -821,7 +731,7 @@ pub fn dump_data_file(da_path: PathBuf) -> Result<(), StoreError> {
     Ok(())
 }
 
-fn get_chunk(fd: &File, offset: u32, len: usize) -> Result<Mmap, StoreError> {
+pub fn get_lk_chunk(fd: &File, offset: u32, len: usize) -> Result<Mmap, StoreError> {
     let mut lock = libc::flock {
         l_type: libc::F_RDLCK as _,
         l_whence: libc::SEEK_SET as i16,
@@ -838,7 +748,7 @@ fn get_chunk(fd: &File, offset: u32, len: usize) -> Result<Mmap, StoreError> {
     Ok(mmap)
 }
 
-fn free_chunk(fd: &File, offset: u32, len: usize) -> Result<(), StoreError> {
+pub fn free_lk_chunk(fd: &File, offset: u32, len: usize) -> Result<(), StoreError> {
     let mut lock = libc::flock {
         l_type: libc::F_UNLCK as _,
         l_whence: libc::SEEK_SET as i16,
@@ -884,13 +794,13 @@ pub fn dump_chunk(
     };
     let inner_chunk_id = chunk_id - data_file_id * actual_size.file_chunk_num;
     let offset = inner_chunk_id * pool_head.chunk_size;
-    if let Ok(mmap) = get_chunk(&data_file, offset, pool_head.chunk_size as usize) {
+    if let Ok(mmap) = get_lk_chunk(&data_file, offset, pool_head.chunk_size as usize) {
         if let Some(file) = pcap_file {
             dump_chunk_pcap(chunk_id, &mmap, &pool_head, file)?;
         } else {
             dump_chunk_info(chunk_id, &mmap, &pool_head)?;
         }
-        free_chunk(&data_file, offset, pool_head.chunk_size as usize)?;
+        free_lk_chunk(&data_file, offset, pool_head.chunk_size as usize)?;
     }
     Ok(())
 }
