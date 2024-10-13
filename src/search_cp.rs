@@ -81,7 +81,7 @@ impl SearchCp {
         let inner_chunk_id = chunk_id - data_file_id * file_chunk_num;
         let chunk_size = self.pool_head.unwrap().chunk_size;
         let chunk_offset = inner_chunk_id * chunk_size;
-        match get_lk_chunk(
+        match get_rlk_chunk(
             self.data_file.as_ref().unwrap(),
             chunk_offset,
             chunk_size as usize,
@@ -114,7 +114,7 @@ impl SearchCp {
         let chunk_size = self.pool_head.unwrap().chunk_size;
         let chunk_offset = inner_chunk_id * chunk_size;
 
-        free_lk_chunk(
+        free_rlk_chunk(
             self.data_file.as_ref().unwrap(),
             chunk_offset,
             self.pool_head.unwrap().chunk_size as usize,

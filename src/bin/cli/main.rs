@@ -19,15 +19,21 @@ use std::path::Path;
 use std::path::PathBuf;
 
 fn main() -> Result<(), StoreError> {
-    let configure;
-
     let matches = cli().get_matches();
-    if let Some(config_path) = matches.get_one::<PathBuf>("config") {
-        println!("config file: {}", config_path.display());
-        configure = Configure::load(config_path)?;
+
+    let conf_file = if let Some(cli_conf) = matches.get_one::<PathBuf>("config") {
+        cli_conf.clone()
+    } else {
+        let home_dir = std::env::var("HOME").expect("Failed to get HOME environment variable");
+        let mut path = PathBuf::from(home_dir);
+        path.push(DEFAULT_CONFIG_FILE);
+        path
+    };
+    let configure = if let Ok(conf) = Configure::load(&conf_file) {
+        conf
     } else {
         return Err(StoreError::OpenError("configure file error".to_string()));
-    }
+    };
     // let mut debug_level: u8 = 0;
     // match matches
     //     .get_one::<u8>("debug")
@@ -151,7 +157,7 @@ fn cli() -> Command {
         .allow_external_subcommands(true)
         .arg(
             arg!(-c --config <FILE> "Sets a custom config file")
-                .required(true)
+                .required(false)
                 .value_parser(value_parser!(PathBuf)),
         )
         .arg(arg!(-d --debug ... "Turn debugging information on"))

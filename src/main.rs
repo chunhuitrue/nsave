@@ -18,20 +18,22 @@ use std::{
 use store::*;
 
 fn main() {
-    let configure;
-
     let matches = cli().get_matches();
-    if let Some(config_path) = matches.get_one::<PathBuf>("config") {
-        println!("configure file: {}", config_path.display());
-        if let Ok(conf) = Configure::load(config_path) {
-            configure = conf;
-        } else {
-            return;
-        }
+
+    let conf_file = if let Some(cli_conf) = matches.get_one::<PathBuf>("config") {
+        cli_conf.clone()
+    } else {
+        let home_dir = std::env::var("HOME").expect("Failed to get HOME environment variable");
+        let mut path = PathBuf::from(home_dir);
+        path.push(DEFAULT_CONFIG_FILE);
+        path
+    };
+    let configure = if let Ok(conf) = Configure::load(&conf_file) {
+        conf
     } else {
         println!("need set configure file");
         return;
-    }
+    };
 
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
@@ -123,11 +125,11 @@ fn main() {
 fn cli() -> Command {
     Command::new("nsave")
         .about("nsave server")
-        .arg_required_else_help(true)
+        .arg_required_else_help(false)
         .allow_external_subcommands(true)
         .arg(
             arg!(-c --config <FILE> "Sets a custom config file")
-                .required(true)
+                .required(false)
                 .value_parser(value_parser!(PathBuf)),
         )
 }

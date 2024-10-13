@@ -6,6 +6,8 @@ use std::io;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+pub const DEFAULT_CONFIG_FILE: &str = ".nsave_conf.toml";
+
 #[derive(Debug)]
 pub enum StoreError {
     IoError(std::io::Error),

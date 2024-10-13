@@ -720,10 +720,10 @@ pub fn dump_data_file(da_path: PathBuf) -> Result<(), StoreError> {
 
     for chunk in 0..actual_size.file_chunk_num {
         let offset = chunk * pool_head.chunk_size;
-        if let Ok(mmap) = get_lk_chunk(&data_file, offset, pool_head.chunk_size as usize) {
+        if let Ok(mmap) = get_rlk_chunk(&data_file, offset, pool_head.chunk_size as usize) {
             let chunk_id = chunk + file_id * actual_size.file_chunk_num;
             dump_chunk_head(chunk_id, &mmap, &pool_head)?;
-            free_lk_chunk(&data_file, offset, pool_head.chunk_size as usize)?;
+            free_rlk_chunk(&data_file, offset, pool_head.chunk_size as usize)?;
         } else {
             break;
         }
@@ -731,7 +731,7 @@ pub fn dump_data_file(da_path: PathBuf) -> Result<(), StoreError> {
     Ok(())
 }
 
-pub fn get_lk_chunk(fd: &File, offset: u32, len: usize) -> Result<Mmap, StoreError> {
+pub fn get_rlk_chunk(fd: &File, offset: u32, len: usize) -> Result<Mmap, StoreError> {
     let mut lock = libc::flock {
         l_type: libc::F_RDLCK as _,
         l_whence: libc::SEEK_SET as i16,
@@ -748,7 +748,7 @@ pub fn get_lk_chunk(fd: &File, offset: u32, len: usize) -> Result<Mmap, StoreErr
     Ok(mmap)
 }
 
-pub fn free_lk_chunk(fd: &File, offset: u32, len: usize) -> Result<(), StoreError> {
+pub fn free_rlk_chunk(fd: &File, offset: u32, len: usize) -> Result<(), StoreError> {
     let mut lock = libc::flock {
         l_type: libc::F_UNLCK as _,
         l_whence: libc::SEEK_SET as i16,
@@ -794,13 +794,13 @@ pub fn dump_chunk(
     };
     let inner_chunk_id = chunk_id - data_file_id * actual_size.file_chunk_num;
     let offset = inner_chunk_id * pool_head.chunk_size;
-    if let Ok(mmap) = get_lk_chunk(&data_file, offset, pool_head.chunk_size as usize) {
+    if let Ok(mmap) = get_rlk_chunk(&data_file, offset, pool_head.chunk_size as usize) {
         if let Some(file) = pcap_file {
             dump_chunk_pcap(chunk_id, &mmap, &pool_head, file)?;
         } else {
             dump_chunk_info(chunk_id, &mmap, &pool_head)?;
         }
-        free_lk_chunk(&data_file, offset, pool_head.chunk_size as usize)?;
+        free_rlk_chunk(&data_file, offset, pool_head.chunk_size as usize)?;
     }
     Ok(())
 }
