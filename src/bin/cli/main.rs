@@ -151,6 +151,8 @@ fn main() -> Result<(), StoreError> {
 
 fn cli() -> Command {
     Command::new("nsave-cli")
+        .version(VERSION)
+        .author(AUTHOR)
         .about("nsave cli")
         .subcommand_required(true)
         .arg_required_else_help(true)

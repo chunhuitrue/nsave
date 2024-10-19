@@ -146,12 +146,14 @@ fn main() {
 
 fn cli() -> Command {
     Command::new("nsave")
+        .version(VERSION)
+        .author(AUTHOR)
         .about("nsave server")
         .arg_required_else_help(false)
         .allow_external_subcommands(true)
+        // .arg(arg!(-V --version "Show nsave version"))
         .arg(
             arg!(-c --config <FILE> "Sets a custom config file")
-                .required(false)
                 .value_parser(value_parser!(PathBuf)),
         )
 }

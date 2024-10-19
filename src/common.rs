@@ -6,6 +6,8 @@ use std::io;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+pub const VERSION: &str = "0.1";
+pub const AUTHOR: &str = "LiChunhui <chunhui_true@163.com>";
 pub const DEFAULT_CONFIG_FILE: &str = ".nsave_conf.toml";
 
 #[derive(Debug)]
