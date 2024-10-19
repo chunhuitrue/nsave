@@ -1,6 +1,7 @@
 interface = "en1"
 pkt_len = 2000
 filter = "tcp"
+daemon = false
 
 # pcap_file = "~/misc/https.pcap"
 store_path = "/Users/lch/misc/nsave_data/"
@@ -15,7 +16,7 @@ timer_intervel = 500000000
 # 毫秒
 writer_empty_sleep = 5
 # 毫秒
-aide_empty_sleep = 100
+clean_empty_sleep = 100
 
 # 16M 1024 * 1024 * 16
 pool_size = 16777216

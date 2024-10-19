@@ -176,6 +176,12 @@ impl Store {
         Ok(())
     }
 
+    pub fn finish(&self) {
+        self.chunk_pool.finish();
+        self.chunk_index.borrow_mut().finish();
+        self.time_index.borrow_mut().finish();
+    }
+
     fn init_dir(&self, now: u128) -> Result<(), StoreError> {
         if self.current_dir.borrow().is_none() {
             self.mk_time_dir(now)?;

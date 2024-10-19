@@ -391,6 +391,10 @@ impl ChunkPool {
         }
         Ok(())
     }
+
+    pub fn finish(&self) {
+        let _ = self.flush();
+    }
 }
 
 impl Drop for ChunkPool {

@@ -65,6 +65,10 @@ impl ChunkIndex {
         }
         Ok(ci_offset)
     }
+
+    pub fn finish(&mut self) {
+        self.buf_writer = None;
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Hash, Clone, Copy)]

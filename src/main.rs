@@ -2,9 +2,11 @@ use capture::*;
 use clap::{arg, value_parser, Command};
 use common::*;
 use configure::*;
+use daemonize::Daemonize;
 use flow::*;
 use libnsave::*;
 use packet::Packet;
+use std::fs::File;
 use std::{
     path::PathBuf,
     sync::{
@@ -35,6 +37,26 @@ fn main() {
         return;
     };
 
+    if configure.daemon {
+        let mut std_out_path = PathBuf::from(configure.store_path.clone());
+        std_out_path.push("nsave.out");
+        let stdout = File::create(std_out_path).unwrap();
+        let mut std_err_path = PathBuf::from(configure.store_path.clone());
+        std_err_path.push("nsave.err");
+        let stderr = File::create(std_err_path).unwrap();
+        let mut pid_file = PathBuf::from(configure.store_path.clone());
+        pid_file.push("nsave.pid");
+        let work_dir = PathBuf::from(configure.store_path.clone());
+
+        let _ = Daemonize::new()
+            .pid_file(pid_file)
+            .working_directory(work_dir)
+            .stdout(stdout)
+            .stderr(stderr)
+            .start()
+            .expect("Failed to start daemon");
+    }
+
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
     ctrlc::set_handler(move || {
@@ -63,10 +85,10 @@ fn main() {
         writer_thds.push(writer_thd);
     }
 
-    let barrier_aide = barrier.clone();
-    let running_aide = running.clone();
-    let aide_thd = thread::spawn(move || {
-        aide_thread(configure, barrier_aide, running_aide, msg_rxs);
+    let barrier_clean = barrier.clone();
+    let running_clean = running.clone();
+    let clean_thd = thread::spawn(move || {
+        clean_thread(configure, barrier_clean, running_clean, msg_rxs);
     });
 
     let mut capture = match Capture::init_capture(configure) {
@@ -76,8 +98,8 @@ fn main() {
             return;
         }
     };
-    barrier.wait();
 
+    barrier.wait();
     while running.load(Ordering::Relaxed) {
         let now = timenow();
         let pkt = capture.next_packet(now);
@@ -111,7 +133,7 @@ fn main() {
     for writer_thd in writer_thds {
         writer_thd.join().unwrap();
     }
-    aide_thd.join().unwrap();
+    clean_thd.join().unwrap();
     for i in 0..configure.thread_num {
         let i: usize = i.try_into().unwrap();
         println!(
@@ -180,9 +202,7 @@ fn writer_thread(
                     }
 
                     if node.is_fin() {
-                        // println!("thread {}. node is fin", writer_id);
                         remove_key = Some(node.key);
-
                         let _ = store.link_fin(&node.key, node.start_time, now);
                     }
                 } else {
@@ -216,20 +236,21 @@ fn writer_thread(
             });
         }
     }
+    store.finish();
     println!(
         "writer: {:?} exit. recv pkt: {}, flow_err: {}",
         writer_id, recv_num, flow_err
     );
 }
 
-fn aide_thread(
+fn clean_thread(
     configure: &'static Configure,
     barrier: Arc<Barrier>,
     running: Arc<AtomicBool>,
     msg_rxs: Vec<Receiver<Msg>>,
 ) {
     barrier.wait();
-    println!("aide thread running...");
+    println!("clean thread running...");
     while running.load(Ordering::Relaxed) {
         for msg_rx in msg_rxs.iter() {
             match msg_rx.try_recv() {
@@ -237,16 +258,16 @@ fn aide_thread(
                     let _ = clean_index_dir(pool_path, ts_date(end_time));
                 }
                 Err(TryRecvError::Empty) => {
-                    thread::sleep(Duration::from_millis(configure.aide_empty_sleep as u64));
+                    thread::sleep(Duration::from_millis(configure.clean_empty_sleep as u64));
                 }
                 Err(TryRecvError::Disconnected) => {
-                    println!("aide_thread: {:?} recv disconnected", msg_rx);
+                    println!("clean_thread: {:?} recv disconnected", msg_rx);
                     return;
                 }
             }
         }
     }
-    println!("aide thread end...");
+    println!("clean thread end...");
 }
 
 struct Statis {

@@ -30,6 +30,7 @@ clap       = "4.5.4"
 memmap2    = "0.9.4"
 libc       = "0.2"
 toml       = "0.8.16"
+daemonize  = "0.5"
 
 [dev-dependencies]
 tempfile = "3.10.1"
