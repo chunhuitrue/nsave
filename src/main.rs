@@ -151,7 +151,6 @@ fn cli() -> Command {
         .about("nsave server")
         .arg_required_else_help(false)
         .allow_external_subcommands(true)
-        // .arg(arg!(-V --version "Show nsave version"))
         .arg(
             arg!(-c --config <FILE> "Sets a custom config file")
                 .value_parser(value_parser!(PathBuf)),
