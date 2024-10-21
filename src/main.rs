@@ -48,7 +48,7 @@ fn main() {
         pid_file.push("nsave.pid");
         let work_dir = PathBuf::from(configure.store_path.clone());
 
-        let _ = Daemonize::new()
+        Daemonize::new()
             .pid_file(pid_file)
             .working_directory(work_dir)
             .stdout(stdout)
@@ -165,11 +165,11 @@ fn writer_thread(
     pkt_rx: Receiver<Arc<Packet>>,
     msg_tx: SyncSender<Msg>,
 ) {
-    let mut flow = Flow::new_with_arg(
+    let mut flow = Box::new(Flow::new_with_arg(
         configure.flow_max_table_capacity,
         configure.flow_node_timeout as u128,
         configure.flow_max_seq_gap,
-    );
+    ));
     let mut now;
     let mut prev_ts = timenow();
     let mut recv_num: u64 = 0;
