@@ -308,10 +308,6 @@ impl Flow {
         self.table.is_full()
     }
 
-    pub fn clear(&mut self) {
-        self.table.clear();
-    }
-
     pub fn timeout<F>(&mut self, now: u128, fun: F)
     where
         F: Fn(&FlowNode),
