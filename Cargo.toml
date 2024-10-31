@@ -17,9 +17,7 @@ name = "libnsave"
 path = "src/lib.rs"
 
 [dependencies]
-# tmohash    = { path = "../tmo_hash", version = "0.1.0"}
-# tmohash = { git = "https://github.com/chunhuitrue/tmo_hash.git", branch = "master" }
-tmohash    = { git = "https://gitee.com/chunhui_true/tmo_hash.git", branch = "master" }
+hashbrown  = "0.14"
 pcap       = "2.0.0"
 etherparse = "0.13.0"
 ctrlc      = "3.4.2"

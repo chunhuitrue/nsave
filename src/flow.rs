@@ -1,8 +1,8 @@
 use crate::packet::{Packet, PacketKey, TransProto};
 use crate::store::*;
+use crate::tmohash::TmoHash;
 use etherparse::IpHeader;
 use std::net::IpAddr;
-use tmohash::TmoHash;
 
 const MAX_TABLE_CAPACITY: usize = 1024;
 const NODE_TIMEOUT: u128 = 10_000_000_000; // 10

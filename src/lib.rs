@@ -11,3 +11,4 @@ pub mod search_cp;
 pub mod search_ti;
 pub mod store;
 pub mod timeindex;
+pub mod tmohash;

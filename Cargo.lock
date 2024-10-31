@@ -406,12 +406,12 @@ dependencies = [
  "ctrlc",
  "daemonize",
  "etherparse",
+ "hashbrown 0.14.5",
  "libc",
  "memmap2",
  "pcap",
  "serde",
  "tempfile",
- "tmohash",
  "toml",
 ]
 
@@ -574,14 +574,6 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys 0.59.0",
-]
-
-[[package]]
-name = "tmohash"
-version = "0.1.0"
-source = "git+https://gitee.com/chunhui_true/tmo_hash.git?branch=master#19d2129dfdb21dab96ad0aa2450f46eb78909844"
-dependencies = [
- "hashbrown 0.14.5",
 ]
 
 [[package]]
