@@ -1,25 +1,36 @@
-use capture::*;
-use clap::{arg, value_parser, Command};
-use common::*;
-use configure::*;
+use crate::capture::*;
+use crate::common::*;
+use crate::configure::*;
+use crate::flow::*;
+use anyhow::anyhow;
+use clap::{Command, arg, value_parser};
+use crossbeam_channel::{self, Receiver, Sender, TryRecvError, TrySendError};
 use daemonize::Daemonize;
-use flow::*;
 use libnsave::*;
-use packet::Packet;
 use std::fs::File;
 use std::{
     path::PathBuf,
     sync::{
-        atomic::{AtomicBool, Ordering},
-        mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError},
         Arc, Barrier,
+        atomic::{AtomicBool, Ordering},
     },
     thread,
     time::Duration,
 };
 use store::*;
 
-fn main() {
+#[cfg(feature = "debug_mode")]
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    main_internal()
+}
+
+#[cfg(not(feature = "debug_mode"))]
+fn main() -> anyhow::Result<()> {
+    main_internal()
+}
+
+fn main_internal() -> anyhow::Result<()> {
     let matches = cli().get_matches();
 
     let conf_file = if let Some(cli_conf) = matches.get_one::<PathBuf>("config") {
@@ -33,8 +44,8 @@ fn main() {
     let configure = if let Ok(conf) = Configure::load(&conf_file) {
         conf
     } else {
-        println!("need set configure file");
-        return;
+        println!("Need set configure file");
+        return Err(anyhow!(""));
     };
 
     if configure.daemon {
@@ -65,6 +76,7 @@ fn main() {
     .expect("Error setting Ctrl-C handler");
 
     let barrier = Arc::new(Barrier::new((configure.thread_num + 2) as usize));
+    let mut decode_err: usize = 0;
     let mut statis = (0..configure.thread_num)
         .map(|_| Statis::new())
         .collect::<Vec<Statis>>();
@@ -72,11 +84,12 @@ fn main() {
     let mut pkt_txs = vec![];
     let mut writer_thds = vec![];
 
+    // 写盘线程
     for i in 0..configure.thread_num {
         let barrier_writer = barrier.clone();
         let running_writer = running.clone();
-        let (msg_tx, msg_rx) = mpsc::sync_channel::<Msg>(configure.msg_channel_size);
-        let (pkt_tx, pkt_rx) = mpsc::sync_channel::<Arc<Packet>>(configure.pkt_channel_size);
+        let (msg_tx, msg_rx) = crossbeam_channel::bounded::<Msg>(configure.msg_channel_size);
+        let (pkt_tx, pkt_rx) = crossbeam_channel::bounded::<Packet>(configure.pkt_channel_size);
         let writer_thd = thread::spawn(move || {
             writer_thread(configure, barrier_writer, running_writer, i, pkt_rx, msg_tx);
         });
@@ -85,48 +98,42 @@ fn main() {
         writer_thds.push(writer_thd);
     }
 
+    // 清理线程
     let barrier_clean = barrier.clone();
     let running_clean = running.clone();
     let clean_thd = thread::spawn(move || {
         clean_thread(configure, barrier_clean, running_clean, msg_rxs);
     });
 
-    let mut capture = match Capture::init_capture(configure) {
-        Ok(cap) => cap,
-        Err(e) => {
-            println!("capture error {:?}", e);
-            return;
-        }
-    };
+    // 设置混杂模式
+    let iface = configure.interface.clone();
+    set_promiscuous_mode(&iface, true)?;
+    // 创建capture
+    println!("Init capture...");
+    let config = CaptureConfig::af_xdp(iface.clone());
+    // let config = CaptureConfig::pcap_live(iface.clone());
+    let mut capture = create_capture(&config)?;
 
+    // 分发线程
+    let thread_num = configure.thread_num;
     barrier.wait();
     while running.load(Ordering::Relaxed) {
-        let now = timenow();
-        let pkt = capture.next_packet(now);
-        if pkt.is_err() {
-            continue;
-        }
-        let pkt = pkt.unwrap();
-        if pkt.decode().is_err() {
-            continue;
-        }
-
-        let index = (pkt.hash_value() % configure.thread_num) as usize;
-        match &pkt_txs[index].try_send(pkt) {
-            Ok(()) => {
-                statis[index].send_ok += 1;
+        capture.acquire_packets(|mut packet| {
+            if packet.decode_ok() {
+                let index = (packet.hash_value() % thread_num) as usize;
+                match &pkt_txs[index].try_send(packet) {
+                    Ok(()) => {
+                        statis[index].send_ok += 1;
+                    }
+                    Err(TrySendError::Full(_)) => {
+                        statis[index].send_err += 1;
+                    }
+                    Err(TrySendError::Disconnected(_)) => {}
+                }
+            } else {
+                decode_err += 1;
             }
-            Err(TrySendError::Full(_)) => {
-                statis[index].send_err += 1;
-            }
-            Err(TrySendError::Disconnected(_)) => {
-                break;
-            }
-        }
-
-        if configure.pcap_file.is_some() {
-            thread::sleep(Duration::from_millis(1));
-        }
+        })?;
     }
 
     running.store(false, Ordering::Relaxed);
@@ -162,8 +169,8 @@ fn writer_thread(
     barrier: Arc<Barrier>,
     running: Arc<AtomicBool>,
     writer_id: u64,
-    pkt_rx: Receiver<Arc<Packet>>,
-    msg_tx: SyncSender<Msg>,
+    pkt_rx: Receiver<Packet>,
+    msg_tx: Sender<Msg>,
 ) {
     let mut flow = Box::new(Flow::new_with_arg(
         configure.flow_max_table_capacity,
@@ -177,20 +184,20 @@ fn writer_thread(
 
     let mut data_path = PathBuf::new();
     data_path.push(&configure.store_path);
-    data_path.push(format!("{:03}", writer_id));
+    data_path.push(format!("{writer_id:03}"));
     let store = Store::new(configure, data_path, msg_tx);
     if let Err(e) = store.init() {
-        println!("packet store init error: {}", e);
+        println!("packet store init error: {e}");
         return;
     }
 
     barrier.wait();
-    println!("writer: {:?} running...", writer_id);
+    println!("writer: {writer_id:?} running...");
     while running.load(Ordering::Relaxed) {
         match pkt_rx.try_recv() {
             Ok(pkt) => {
                 recv_num += 1;
-                now = pkt.timestamp;
+                now = pkt.timestamp();
                 let mut remove_key = None;
                 if let Some(node) = flow.get_mut_or_new(&pkt, now) {
                     node.update(&pkt, now);
@@ -198,7 +205,9 @@ fn writer_thread(
                     if node.store_ctx.is_none() {
                         node.store_ctx = Some(StoreCtx::new());
                     }
-                    if store.store(node, pkt, now).is_err() {
+                    let store_ret = store.store(node, pkt, now);
+                    if store_ret.is_err() {
+                        println!("writer {writer_id:?}, store err: {store_ret:?}.break");
                         break;
                     }
 
@@ -219,7 +228,7 @@ fn writer_thread(
                 now = timenow();
             }
             Err(TryRecvError::Disconnected) => {
-                println!("writer_thread: {:?} recv disconnected", writer_id);
+                println!("writer_thread: {writer_id:?} recv disconnected");
                 break;
             }
         }
@@ -238,10 +247,7 @@ fn writer_thread(
         }
     }
     store.finish();
-    println!(
-        "writer: {:?} exit. recv pkt: {}, flow_err: {}",
-        writer_id, recv_num, flow_err
-    );
+    println!("writer: {writer_id:?} exit. recv pkt: {recv_num}, flow_err: {flow_err}");
 }
 
 fn clean_thread(
@@ -262,7 +268,7 @@ fn clean_thread(
                     thread::sleep(Duration::from_millis(configure.clean_empty_sleep as u64));
                 }
                 Err(TryRecvError::Disconnected) => {
-                    println!("clean_thread: {:?} recv disconnected", msg_rx);
+                    println!("clean_thread: {msg_rx:?} recv disconnected");
                     return;
                 }
             }

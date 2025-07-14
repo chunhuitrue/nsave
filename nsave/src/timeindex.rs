@@ -1,7 +1,6 @@
 use crate::common::*;
 use crate::configure::*;
 use crate::mmapbuf::*;
-use crate::packet::*;
 use crate::search_ti::*;
 use bincode::deserialize_from;
 use chrono::{Duration, NaiveDateTime};
@@ -158,13 +157,13 @@ pub fn dump_timeindex_file(path: PathBuf) -> Result<(), StoreError> {
     {
         Ok(fd) => fd,
         Err(e) => {
-            return Err(StoreError::CliError(format!("open file error: {}", e)));
+            return Err(StoreError::CliError(format!("open file error: {e}")));
         }
     };
     let mut mmap_reader = MmapBufReader::new(file);
-    println!("dump timeindex file: {:?}", path);
+    println!("dump timeindex file: {path:?}");
     while let Ok(record) = deserialize_from::<_, LinkRecord>(&mut mmap_reader) {
-        println!("{}", record);
+        println!("{record}");
     }
     Ok(())
 }

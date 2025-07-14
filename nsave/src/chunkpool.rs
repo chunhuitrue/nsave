@@ -1,7 +1,7 @@
+use crate::capture::Packet;
 use crate::common::*;
-use crate::packet::*;
 use chrono::{DateTime, Datelike, Local, Timelike};
-use libc::{fcntl, F_SETLK, F_SETLKW};
+use libc::{F_SETLK, F_SETLKW, fcntl};
 use memmap2::{Mmap, MmapMut, MmapOptions};
 use pcap::Capture as PcapCapture;
 use pcap::Linktype;
@@ -11,7 +11,7 @@ use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Cursor, Read, Write};
 use std::os::fd::AsRawFd;
-use std::{cell::RefCell, path::PathBuf, sync::Arc};
+use std::{cell::RefCell, path::PathBuf};
 
 #[derive(Debug)]
 pub struct ChunkPool {
@@ -75,6 +75,7 @@ impl ChunkPool {
                 "chunk pool create dir error".to_string(),
             ));
         }
+
         let pool_file_path = self.pool_path.join("pool.pl");
         if !pool_file_path.exists() {
             self.create_pool_file(&pool_file_path)?;
@@ -125,7 +126,7 @@ impl ChunkPool {
 
     pub fn write<F>(
         &self,
-        pkt: Arc<Packet>,
+        pkt: Packet,
         now: u128,
         cover_chunk_fn: F,
     ) -> Result<ChunkOffset, StoreError>
@@ -148,6 +149,7 @@ impl ChunkPool {
         let chunk_u8: &mut [u8] = chunk_map.as_mut().unwrap();
         let mut chunk_offset = &mut chunk_u8[pkt_start as usize..];
 
+        println!("chunkpool write 222...");
         pkt.serialize_into(&mut chunk_offset)?;
         self.chunk_head.borrow_mut().as_mut().unwrap().filled_size += pkt.serialize_size();
         self.chunk_head.borrow_mut().as_mut().unwrap().end_time = now;
@@ -206,7 +208,7 @@ impl ChunkPool {
 
     fn create_chunk_file(&self) -> Result<(), StoreError> {
         for i in 0..self.actual_file_num {
-            let path = self.pool_path.join(format!("{:03}.da", i));
+            let path = self.pool_path.join(format!("{i:03}.da"));
             let data_file = File::create(path)?;
             data_file.set_len(self.actual_file_size)?;
         }
@@ -217,11 +219,13 @@ impl ChunkPool {
     where
         F: Fn(PathBuf, u128),
     {
+        println!("chunkpool next chunk...");
+
         let chunk_id = self.pool_head.borrow().as_ref().unwrap().next_chunk_id;
         let file_id = chunk_id / self.file_chunk_num;
         if self.chunk_file_id.borrow().is_none() || self.chunk_file_id.borrow().unwrap() != file_id
         {
-            let path = self.pool_path.join(format!("{:03}.da", file_id));
+            let path = self.pool_path.join(format!("{file_id:03}.da"));
             let result = OpenOptions::new()
                 .read(true)
                 .write(true)
@@ -414,7 +418,7 @@ pub struct ActualSize {
 impl ActualSize {
     pub fn new(pool_size: u64, file_size: u64, chunk_size: u32) -> Self {
         let actual_file_size = ((file_size - 1) / (chunk_size as u64) + 1) * (chunk_size as u64);
-        let actual_file_num = ((pool_size + actual_file_size - 1) / actual_file_size) as u32;
+        let actual_file_num = pool_size.div_ceil(actual_file_size) as u32;
         let file_chunk_num = (actual_file_size / (chunk_size as u64)) as u32;
         let chunk_num = actual_file_num * file_chunk_num;
         ActualSize {
@@ -664,11 +668,11 @@ pub fn dump_pool_file(path: PathBuf) -> Result<(), StoreError> {
             pool_head.file_size,
             pool_head.chunk_size,
         );
-        println!("pool file {:?}:\n{}", path, pool_head);
-        println!("actual size: {}", actual_size);
+        println!("pool file {path:?}:\n{pool_head}");
+        println!("actual size: {actual_size}");
         Ok(())
     } else {
-        println!("open pool file: {:?} error", path);
+        println!("open pool file: {path:?} error");
         Err(StoreError::CliError("open pool file error".to_string()))
     }
 }
@@ -706,8 +710,8 @@ pub fn dump_data_file(da_path: PathBuf) -> Result<(), StoreError> {
         pool_head.file_size,
         pool_head.chunk_size,
     );
-    println!("pool file {:?}:\n{}", pool_file_path, pool_head);
-    println!("actual size: {}", actual_size);
+    println!("pool file {pool_file_path:?}:\n{pool_head}");
+    println!("actual size: {actual_size}");
 
     let data_file = match OpenOptions::new()
         .read(true)
@@ -718,7 +722,7 @@ pub fn dump_data_file(da_path: PathBuf) -> Result<(), StoreError> {
     {
         Ok(file_fd) => file_fd,
         Err(e) => {
-            return Err(StoreError::CliError(format!("open file error: {}", e)));
+            return Err(StoreError::CliError(format!("open file error: {e}")));
         }
     };
 
@@ -779,11 +783,11 @@ pub fn dump_chunk(
         pool_head.file_size,
         pool_head.chunk_size,
     );
-    println!("pool head: {}", pool_head);
-    println!("actual size: {}", actual_size);
+    println!("pool head: {pool_head}");
+    println!("actual size: {actual_size}");
 
     let data_file_id = chunk_id / actual_size.file_chunk_num;
-    let data_file_path = chunk_pool_path.join(format!("{:03}.da", data_file_id));
+    let data_file_path = chunk_pool_path.join(format!("{data_file_id:03}.da"));
     let data_file = match OpenOptions::new()
         .read(true)
         .write(false)
@@ -793,7 +797,7 @@ pub fn dump_chunk(
     {
         Ok(file_fd) => file_fd,
         Err(e) => {
-            return Err(StoreError::CliError(format!("open data file error: {}", e)));
+            return Err(StoreError::CliError(format!("open data file error: {e}")));
         }
     };
     let inner_chunk_id = chunk_id - data_file_id * actual_size.file_chunk_num;
@@ -835,7 +839,7 @@ fn dump_chunk_info(id: u32, chunk: &[u8], pool_head: &PoolHead) -> Result<(), St
     if head.filled_size > ChunkHead::serialize_size() as u32 {
         while cursor.position() < head.filled_size.into() {
             let store_pkt = StorePacket::deserialize_from(&mut cursor)?;
-            println!("{}", store_pkt);
+            println!("{store_pkt}");
         }
     } else {
         println!("no packet\n");
@@ -858,7 +862,7 @@ fn dump_chunk_pcap(
         pool_head.chunk_size - head.filled_size
     );
 
-    println!("dump packet to pcap: {:?}", pcap_file);
+    println!("dump packet to pcap: {pcap_file:?}");
     if head.filled_size > ChunkHead::serialize_size() as u32 {
         let capture = PcapCapture::dead(Linktype::ETHERNET);
         if capture.is_err() {
@@ -870,7 +874,7 @@ fn dump_chunk_pcap(
 
         while cursor.position() < head.filled_size.into() {
             let store_pkt = StorePacket::deserialize_from(&mut cursor)?;
-            println!("save pkt: {}", store_pkt);
+            println!("save pkt: {store_pkt}");
 
             let header = CapPacketHeader {
                 ts: ts_timeval(store_pkt.timestamp),
@@ -885,7 +889,7 @@ fn dump_chunk_pcap(
             pkt_num += 1;
         }
         let _ = savefile.flush();
-        println!("save packet num: {}", pkt_num);
+        println!("save packet num: {pkt_num}");
     } else {
         println!("no packet\n");
     }

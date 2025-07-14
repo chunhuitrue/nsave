@@ -1,7 +1,6 @@
 use crate::common::*;
 use crate::configure::*;
 use crate::mmapbuf::*;
-use crate::packet::*;
 use bincode::deserialize_from;
 use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
@@ -113,13 +112,13 @@ pub fn dump_chunkindex_file(path: PathBuf) -> Result<(), StoreError> {
     {
         Ok(fd) => fd,
         Err(e) => {
-            return Err(StoreError::CliError(format!("open file error: {}", e)));
+            return Err(StoreError::CliError(format!("open file error: {e}")));
         }
     };
     let mut mmap_reader = MmapBufReader::new(file);
-    println!("dump chunkid file: {:?}", path);
+    println!("dump chunkid file: {path:?}");
     while let Ok(record) = deserialize_from::<_, ChunkIndexRd>(&mut mmap_reader) {
-        println!("record: {}", record);
+        println!("record: {record}");
     }
     Ok(())
 }

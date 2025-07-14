@@ -21,7 +21,7 @@ impl SearchCp {
     pub fn new(configure: &'static Configure, dir_id: u64) -> Self {
         let mut path = PathBuf::new();
         path.push(configure.store_path.clone());
-        path.push(format!("{:03}", dir_id));
+        path.push(format!("{dir_id:03}"));
         path.push("chunk_pool");
 
         SearchCp {
@@ -63,7 +63,7 @@ impl SearchCp {
 
         let file_chunk_num = self.actual_size.unwrap().file_chunk_num;
         let data_file_id = chunk_id / file_chunk_num;
-        let data_file_path = self.pool_path.join(format!("{:03}.da", data_file_id));
+        let data_file_path = self.pool_path.join(format!("{data_file_id:03}.da"));
         let data_file = match OpenOptions::new()
             .read(true)
             .write(false)
@@ -73,7 +73,7 @@ impl SearchCp {
         {
             Ok(file_fd) => file_fd,
             Err(e) => {
-                return Err(StoreError::CliError(format!("open data file error: {}", e)));
+                return Err(StoreError::CliError(format!("open data file error: {e}")));
             }
         };
         self.data_file = Some(data_file);
@@ -88,7 +88,7 @@ impl SearchCp {
         ) {
             Ok(mmap) => self.chunk_map = Some(mmap),
             Err(e) => {
-                return Err(StoreError::CliError(format!("map chunk error: {}", e)));
+                return Err(StoreError::CliError(format!("map chunk error: {e}")));
             }
         }
 

@@ -1,5 +1,5 @@
 use crate::common::StoreError;
-use libc::{fcntl, F_SETLK, F_SETLKW};
+use libc::{F_SETLK, F_SETLKW, fcntl};
 use memmap2::{MmapMut, MmapOptions};
 use std::io::{Read, Write};
 use std::{cell::RefCell, fs::File, os::fd::AsRawFd};
@@ -254,7 +254,7 @@ mod tests {
     use super::*;
     use crate::{
         chunkindex::ChunkIndexRd,
-        packet::{PacketKey, TransProto},
+        common::{PacketKey, TransProto},
     };
     use bincode::deserialize_from;
     use std::fs::OpenOptions;

@@ -1,7 +1,12 @@
 use crate::common::StoreError;
 use serde::Deserialize;
+use std::env;
 use std::fs;
-use std::path::Path;
+use std::path::Path; // 添加这个导入
+
+pub const VERSION: &str = "0.2";
+pub const AUTHOR: &str = "LiChunhui <chunhui_true@163.com>";
+pub const DEFAULT_CONFIG_FILE: &str = ".nsave_conf.toml";
 
 #[derive(Debug, Deserialize)]
 pub struct Configure {
@@ -30,8 +35,26 @@ pub struct Configure {
 impl Configure {
     pub fn load(file_path: &Path) -> Result<&'static Configure, StoreError> {
         let toml_str = fs::read_to_string(file_path).expect("Failed to read configure file");
-        let configure: Configure =
+        let mut configure: Configure =
             toml::from_str(&toml_str).expect("Failed to deserialize configure file");
-        return Ok(Box::leak(Box::new(configure)));
+
+        configure.store_path = expand_tilde_path(&configure.store_path);
+
+        if let Some(ref pcap_file) = configure.pcap_file {
+            configure.pcap_file = Some(expand_tilde_path(pcap_file));
+        }
+
+        Ok(Box::leak(Box::new(configure)))
+    }
+}
+
+fn expand_tilde_path(path: &str) -> String {
+    if path.starts_with("~/") {
+        let home = env::var("HOME").expect("Failed to get HOME environment variable");
+        format!("{}{}", home, &path[1..])
+    } else if path == "~" {
+        env::var("HOME").expect("Failed to get HOME environment variable")
+    } else {
+        path.to_string()
     }
 }

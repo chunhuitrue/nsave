@@ -1,10 +1,9 @@
 use chrono::{Duration, Local, NaiveDateTime};
-use clap::{arg, value_parser, Command};
+use clap::{Command, arg, value_parser};
 use libnsave::chunkindex::*;
 use libnsave::chunkpool::*;
 use libnsave::common::*;
 use libnsave::configure::*;
-use libnsave::packet::*;
 use libnsave::search_ci::*;
 use libnsave::search_cp::*;
 use libnsave::search_ti::*;
@@ -45,6 +44,7 @@ fn main() -> Result<(), StoreError> {
     //     3 => debug_level = 3,
     //     _ => {}
     // }
+
     match matches.subcommand() {
         Some(("dump", sub_matches)) => {
             if let Some(timeindex_file) = sub_matches.get_one::<String>("timeindex_file") {
@@ -319,7 +319,7 @@ fn search_only(configure: &'static Configure, search_key: SearchKey) {
 
         println!("find link:");
         for ti in dir_ti {
-            println!("{}", ti);
+            println!("{ti}");
         }
     }
 }
@@ -337,7 +337,7 @@ fn search_dump(
 
         println!("find link:");
         for ti in &dir_ti {
-            println!("{}", ti);
+            println!("{ti}");
         }
         dump(configure, dir_ti, &pcap_file, dir_id)?;
     }
@@ -372,7 +372,7 @@ fn bpf_search_dump_dir(
     pcap_file: Option<PathBuf>,
     dir_id: u64,
 ) -> Result<(), StoreError> {
-    println!("start search from dir_id: {:?}", dir_id);
+    println!("start search from dir_id: {dir_id:?}");
 
     let search_ti = SearchTi::new(configure, start_date, Some(end_date), dir_id);
     let res = search_ti.next_ti();
@@ -423,7 +423,7 @@ fn bpf_search_dump_dir(
 
     let mut search_cp = SearchCp::new(configure, dir_id);
     if let Err(err) = search_cp.load_chunk(ci.chunk_id, ci.chunk_offset) {
-        println!("cp search err: {:?}", err);
+        println!("cp search err: {err:?}");
         return Err(StoreError::WriteError("cp search err".to_string()));
     }
     while let Some(pkt) = search_cp.next_pkt() {
@@ -433,7 +433,7 @@ fn bpf_search_dump_dir(
         }
 
         if bpf_program.filter(&pkt.data) {
-            println!("find packet : {:?}", pkt);
+            println!("find packet: {pkt:?}");
             if let Some(ref mut savefile) = savefile {
                 println!("save packet");
                 let header = CapPacketHeader {
@@ -450,7 +450,7 @@ fn bpf_search_dump_dir(
         }
     }
 
-    println!("end search from dir_id: {:?}", dir_id);
+    println!("end search from dir_id: {dir_id:?}");
     Ok(())
 }
 
@@ -493,7 +493,7 @@ fn dump(
                         }
                         search_cp.load_chunk(rd.chunk_id, rd.chunk_offset)?;
                         while let Some(pkt) = search_cp.next_link_pkt() {
-                            println!("write pkt:{}", pkt);
+                            println!("write pkt:{pkt}");
                             let header = CapPacketHeader {
                                 ts: ts_timeval(pkt.timestamp),
                                 caplen: pkt.data_len as u32,

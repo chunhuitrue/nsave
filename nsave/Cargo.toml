@@ -1,0 +1,73 @@
+[package]
+name          = "nsave"
+version       = "0.2.0"
+edition       = "2024"
+description   = "capturing and saving packets"
+documentation = "https://docs.rs/nsave"
+keywords      = ["packet", "capture", "network", "store"]
+categories    = ["command-line-utilities"]
+homepage      = "https://github.com/chunhuitrue/nsave"
+repository    = "https://github.com/chunhuitrue/nsave"
+license       = "GPL-3.0-only"
+readme        = "README.md"
+authors       = ["李春辉 <chunhui_true@163.com>"]
+
+[features]
+default    = []
+debug_mode = ["dep:aya-log", "tokio/macros", "tokio/rt-multi-thread", "tokio/rt", "tokio/signal"]
+
+[dependencies]
+common            = { path = "../common", features = ["user"] }
+anyhow            = { workspace = true, default-features = true }
+aya               = { workspace = true }
+aya-log           = { workspace = true, optional = true }
+env_logger        = { workspace = true }
+log               = { workspace = true }
+libc              = { workspace = true }
+tokio             = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "net", "signal"] }
+clap              = { workspace = true, features = ["derive"] }
+s2n-quic-xdp      = "0.59.0"
+scopeguard        = "1.2"
+crossbeam-channel = "0.5.15"
+network-types     = "0.0.8"
+pcap              = "2.2.0"
+hashbrown         = "0.14"
+etherparse        = "0.13.0"
+ctrlc             = "3.4.2"
+chrono            = "0.4.35"
+serde             = { version = "1.0", features = ["derive"] }
+bincode           = "1.3.3"
+memmap2           = "0.9.4"
+toml              = "0.8.16"
+daemonize         = "0.5"
+
+[dev-dependencies]
+tempfile = "3.10.1"
+
+[build-dependencies]
+cargo_metadata = { workspace = true }
+# TODO(https://github.com/rust-lang/cargo/issues/12375): this should be an artifact dependency, but
+# it's not possible to tell cargo to use `-Z build-std` to build it. We cargo-in-cargo in the build
+# script to build this, but we want to teach cargo about the dependecy so that cache invalidation
+# works properly.
+#
+# Note also that https://github.com/rust-lang/cargo/issues/10593 occurs when `target = ...` is added
+# to an artifact dependency; it seems possible to work around that by setting `resolver = "1"` in
+# Cargo.toml in the workspace root.
+#
+# Finally note that *any* usage of `artifact = ...` in *any* Cargo.toml in the workspace breaks
+# workflows with stable cargo; stable cargo outright refuses to load manifests that use unstable
+# features.
+ebpf = { path = "../ebpf" }
+
+[lib]
+name = "libnsave"
+path = "src/lib.rs"
+
+[[bin]]
+name = "nsave"
+path = "src/main.rs"
+
+[[bin]]
+name = "nsave-cli"
+path = "src/bin/cli/main.rs"

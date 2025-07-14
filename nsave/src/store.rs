@@ -1,16 +1,16 @@
+use crate::capture::Packet;
 use crate::chunkindex::*;
 use crate::chunkpool::*;
 use crate::common::*;
 use crate::configure::*;
 use crate::flow::FlowNode;
-use crate::packet::*;
 use crate::timeindex::*;
 use chrono::{DateTime, Datelike, Local, Timelike};
+use crossbeam_channel::{self, Sender};
 use std::{
     cell::RefCell,
     fs,
     path::{Path, PathBuf},
-    sync::{mpsc::SyncSender, Arc},
 };
 
 #[derive(Debug)]
@@ -45,7 +45,7 @@ pub struct Store {
     current_dir: RefCell<Option<PathBuf>>,
     current_dir_date: RefCell<DateTime<Local>>,
     chunk_pool: ChunkPool,
-    msg_channel: SyncSender<Msg>,
+    msg_channel: Sender<Msg>,
     chunk_index: RefCell<ChunkIndex>,
     time_index: RefCell<TimeIndex>,
 }
@@ -54,7 +54,7 @@ impl Store {
     pub fn new(
         configure: &'static Configure,
         store_dir: PathBuf,
-        msg_channel: SyncSender<Msg>,
+        msg_channel: Sender<Msg>,
     ) -> Self {
         Store {
             store_dir: store_dir.clone(),
@@ -77,12 +77,7 @@ impl Store {
         Ok(())
     }
 
-    pub fn store(
-        &self,
-        flow_node: &FlowNode,
-        pkt: Arc<Packet>,
-        now: u128,
-    ) -> Result<(), StoreError> {
+    pub fn store(&self, flow_node: &FlowNode, pkt: Packet, now: u128) -> Result<(), StoreError> {
         self.init_dir(now)?;
 
         let ctx = flow_node.store_ctx.as_ref().unwrap();
@@ -238,9 +233,9 @@ fn clean_minute_dir(pool_path: &Path, end_date: DateTime<Local>) -> Result<(), S
         path.push(format!("{:02}", end_date.month()));
         path.push(format!("{:02}", end_date.day()));
         path.push(format!("{:02}", end_date.hour()));
-        path.push(format!("{:02}", minute));
+        path.push(format!("{minute:02}"));
         if path.exists() {
-            println!("minute path: {:?}", path);
+            println!("minute path: {path:?}");
             fs::remove_dir_all(path)?;
         }
     }
@@ -256,7 +251,7 @@ fn clean_hour_dir(pool_path: &Path, end_date: DateTime<Local>) -> Result<(), Sto
     path.push(format!("{:02}", end_date.day()));
     path.push(format!("{:02}", end_date.hour()));
     if is_empty_dir(&path) {
-        println!("hour path: {:?}", path);
+        println!("hour path: {path:?}");
         fs::remove_dir_all(path)?;
     }
 
@@ -267,9 +262,9 @@ fn clean_hour_dir(pool_path: &Path, end_date: DateTime<Local>) -> Result<(), Sto
         path.push(format!("{:04}", end_date.year()));
         path.push(format!("{:02}", end_date.month()));
         path.push(format!("{:02}", end_date.day()));
-        path.push(format!("{:02}", hour));
+        path.push(format!("{hour:02}"));
         if path.exists() {
-            println!("hour before path: {:?}", path);
+            println!("hour before path: {path:?}");
             fs::remove_dir_all(path)?;
         }
     }
@@ -284,7 +279,7 @@ fn clean_day_dir(pool_path: &Path, end_date: DateTime<Local>) -> Result<(), Stor
     path.push(format!("{:02}", end_date.month()));
     path.push(format!("{:02}", end_date.day()));
     if is_empty_dir(&path) {
-        println!("day path: {:?}", path);
+        println!("day path: {path:?}");
         fs::remove_dir_all(path)?;
     }
 
@@ -294,9 +289,9 @@ fn clean_day_dir(pool_path: &Path, end_date: DateTime<Local>) -> Result<(), Stor
         path.pop();
         path.push(format!("{:04}", end_date.year()));
         path.push(format!("{:02}", end_date.month()));
-        path.push(format!("{:02}", day));
+        path.push(format!("{day:02}"));
         if path.exists() {
-            println!("day before path: {:?}", path);
+            println!("day before path: {path:?}");
             fs::remove_dir_all(path)?;
         }
     }
@@ -310,7 +305,7 @@ fn clean_month_dir(pool_path: &Path, end_date: DateTime<Local>) -> Result<(), St
     path.push(format!("{:04}", end_date.year()));
     path.push(format!("{:02}", end_date.month()));
     if is_empty_dir(&path) {
-        println!("moutn path: {:?}", path);
+        println!("moutn path: {path:?}");
         fs::remove_dir_all(path)?;
     }
 
@@ -319,9 +314,9 @@ fn clean_month_dir(pool_path: &Path, end_date: DateTime<Local>) -> Result<(), St
         path.push(pool_path);
         path.pop();
         path.push(format!("{:04}", end_date.year()));
-        path.push(format!("{:02}", month));
+        path.push(format!("{month:02}"));
         if path.exists() {
-            println!("month before path: {:?}", path);
+            println!("month before path: {path:?}");
             fs::remove_dir_all(path)?;
         }
     }

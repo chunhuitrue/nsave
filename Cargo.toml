@@ -1,42 +1,35 @@
-[package]
-name          = "nsave"
-version       = "0.1.0"
-edition       = "2021"
-description   = "capturing and saving packets"
-documentation = "https://docs.rs/nsave"
-keywords      = ["packet", "capture"]
-categories    = ["command-line-utilities"]
-homepage      = "https://github.com/chunhuitrue/nsave"
-repository    = "https://github.com/chunhuitrue/nsave"
-license       = "GPL-3.0-only"
-readme        = "README.md"
-authors       = ["李春辉"]
+[workspace]
+resolver        = "2"
+members         = ["nsave", "common", "ebpf"]
+default-members = ["nsave", "common"]
 
-[[bin]]
-name = "nsave"
-path = "src/main.rs"
+[workspace.dependencies]
+aya            = { version = "0.13.1", default-features = false }
+aya-ebpf       = { version = "0.1.1", default-features = false }
+aya-log        = { version = "0.2.1", default-features = false }
+aya-log-ebpf   = { version = "0.1.1", default-features = false }
+anyhow         = { version = "1", default-features = false }
+cargo_metadata = { version = "0.18.0", default-features = false }
+env_logger     = { version = "0.11.5", default-features = false }
+libc           = { version = "0.2.174", default-features = false }
+log            = { version = "0.4.22", default-features = false }
+tokio          = { version = "1.40.0", default-features = false }
+which          = { version = "6.0.0", default-features = false }
+clap           = "4.5.41"
+# `std` feature is currently required to build `clap`.
+#
+# See https://github.com/clap-rs/clap/blob/61f5ee5/clap_builder/src/lib.rs#L15.
 
-[[bin]]
-name = "nsave-cli"
-path = "src/bin/cli/main.rs"
+# clap = { version = "4.5.41",  features = ["std"] }
+# clap = { version = "4.5.41", default-features = false, features = ["std"] }
+# clap = { version = "4.5.20", default-features = false, features = ["std"] }
 
-[lib]
-name = "libnsave"
-path = "src/lib.rs"
+[profile.dev]
+panic = "abort"
 
-[dependencies]
-hashbrown  = "0.14"
-pcap       = "2.0.0"
-etherparse = "0.13.0"
-ctrlc      = "3.4.2"
-chrono     = "0.4.35"
-serde      = { version = "1.0", features = ["derive"] }
-bincode    = "1.3.3"
-clap       = "4.5.4"
-memmap2    = "0.9.4"
-libc       = "0.2"
-toml       = "0.8.16"
-daemonize  = "0.5"
+[profile.release]
+panic = "abort"
 
-[dev-dependencies]
-tempfile = "3.10.1"
+[profile.release.package.ebpf]
+debug         = 2
+codegen-units = 1
