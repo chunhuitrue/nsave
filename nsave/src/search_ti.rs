@@ -87,7 +87,7 @@ pub fn date2ti_file(
     dir: u64,
 ) -> Result<(File, PathBuf), StoreError> {
     let mut path = PathBuf::new();
-    path.push(configure.store_path.clone());
+    path.push(configure.main.store_path.clone());
     path.push(format!("{dir:03}"));
     path.push(format!("{:04}", date.year()));
     path.push(format!("{:02}", date.month()));

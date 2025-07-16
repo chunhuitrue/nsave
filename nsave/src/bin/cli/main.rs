@@ -311,7 +311,7 @@ fn parse_protocol(protocol: &str) -> Result<TransProto, String> {
 }
 
 fn search_only(configure: &'static Configure, search_key: SearchKey) {
-    for dir_id in 0..configure.thread_num {
+    for dir_id in 0..configure.main.thread_num {
         let dir_ti = ti_search(configure, search_key, dir_id);
         if dir_ti.is_empty() {
             continue;
@@ -329,7 +329,7 @@ fn search_dump(
     search_key: SearchKey,
     pcap_file: PathBuf,
 ) -> Result<(), StoreError> {
-    for dir_id in 0..configure.thread_num {
+    for dir_id in 0..configure.main.thread_num {
         let dir_ti = ti_search(configure, search_key, dir_id);
         if dir_ti.is_empty() {
             continue;
@@ -351,7 +351,7 @@ fn bpf_search_dump(
     filter: &str,
     pcap_file: Option<PathBuf>,
 ) -> Result<(), StoreError> {
-    for dir_id in 0..configure.thread_num {
+    for dir_id in 0..configure.main.thread_num {
         let _ = bpf_search_dump_dir(
             configure,
             start_time,
@@ -394,7 +394,7 @@ fn bpf_search_dump_dir(
     }
     let ci = ci.unwrap();
 
-    if configure.filter.is_none() {
+    if configure.main.filter.is_none() {
         println!("bpf filter is none");
         return Err(StoreError::WriteError("bpf filter is none".to_string()));
     }

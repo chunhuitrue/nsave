@@ -20,7 +20,7 @@ pub struct SearchCp {
 impl SearchCp {
     pub fn new(configure: &'static Configure, dir_id: u64) -> Self {
         let mut path = PathBuf::new();
-        path.push(configure.store_path.clone());
+        path.push(configure.main.store_path.clone());
         path.push(format!("{dir_id:03}"));
         path.push("chunk_pool");
 

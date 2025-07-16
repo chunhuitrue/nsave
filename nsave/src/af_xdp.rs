@@ -5,15 +5,13 @@ use anyhow::anyhow;
 use aya::maps::XskMap;
 use aya::programs::{Xdp, XdpFlags as AyaXdpFlags};
 use crossbeam_channel::{Receiver, Sender, TryRecvError, bounded};
-use log::debug;
-use log::error;
-#[cfg(feature = "debug_mode")]
-use log::warn;
+use log::{error, info, warn};
 use network_types::{eth::EtherType, ip::IpProto};
 use s2n_quic_xdp::{
     if_xdp::{self, UmemDescriptor, XdpFlags},
     ring, socket, syscall, umem,
 };
+use serde::Deserialize;
 use std::error::Error;
 use std::ffi::CString;
 use std::fmt;
@@ -53,8 +51,6 @@ impl AfXdp {
     }
 
     pub fn new_with_config(iface: &str, config: AfXdpConfig) -> Result<Self> {
-        env_logger::init();
-
         // Bump the memlock rlimit. This is needed for older kernels that don't use the
         // new memcg based accounting, see https://lwn.net/Articles/837122/
         let rlim = libc::rlimit {
@@ -63,7 +59,7 @@ impl AfXdp {
         };
         let ret = unsafe { libc::setrlimit(libc::RLIMIT_MEMLOCK, &rlim) };
         if ret != 0 {
-            debug!("remove limit on locked memory failed, ret is: {ret}");
+            warn!("Warn: Remove limit on locked memory failed, ret is: {ret}");
         }
 
         let meta_size = std::mem::size_of::<AfXdpPacketMeta>();
@@ -87,9 +83,8 @@ impl AfXdp {
             ..Default::default()
         }
         .build()?;
-
-        println!(
-            "Shared UMEM created with {} frames for {} queues",
+        info!(
+            "Info: Shared UMEM created with {} frames for {} queues",
             umem.frame_count(),
             max_queues
         );
@@ -140,9 +135,9 @@ impl AfXdp {
 
             // 绑定到队列
             match syscall::bind(&socket, &mut address) {
-                Ok(_) => println!("Queue {queue_id}: Successfully bound with shared UMEM"),
+                Ok(_) => info!("Info: Queue {queue_id}: Successfully bound with shared UMEM"),
                 Err(e) => {
-                    error!("Queue {queue_id}: Failed to bind: {e}");
+                    error!("Error: Queue {queue_id}: Failed to bind: {e}");
                     return Err(e.into());
                 }
             }
@@ -157,7 +152,7 @@ impl AfXdp {
             });
         }
 
-        // 加载xdp
+        // load xdp
         // This will include your eBPF object file as raw bytes at compile-time and load it at
         // runtime. This approach is recommended for most real-world use cases. If you would
         // like to specify the eBPF program at runtime rather than at compile-time, you can
@@ -167,11 +162,11 @@ impl AfXdp {
             "/nsave"
         )))?;
 
-        // 同步方式不需要
+        // debug with tokio
         #[cfg(feature = "debug_mode")]
         if let Err(e) = aya_log::EbpfLogger::init(&mut ebpf) {
-            // This can happen if you remove all log statements from your eBPF program.
-            warn!("failed to initialize eBPF logger: {e}");
+            // This can happen if remove all log statements from your eBPF program.
+            warn!("Warn: failed to initialize eBPF logger: {e}");
         }
 
         let program: &mut Xdp = ebpf.program_mut("nsave").unwrap().try_into()?;
@@ -188,7 +183,7 @@ impl AfXdp {
             .map(|queue| (queue.queue_id, queue.socket.as_raw_fd()))
             .collect();
         for (queue_id, socket_fd) in queue_sockets {
-            println!("Inserting queue {queue_id} with socket fd {socket_fd} into XSK map");
+            info!("Info: Inserting queue {queue_id} with socket fd {socket_fd} into XSK map");
             xsks_map.set(queue_id, socket_fd, 0)?;
         }
 
@@ -199,7 +194,7 @@ impl AfXdp {
             packet_count: 0,
             recycle_rx,
             recycle_tx,
-            recycle_bufs: vec![Vec::with_capacity(config.recycle_buf_size); max_queues as usize],
+            recycle_bufs: vec![Vec::with_capacity(config.recycle_buff_size); max_queues as usize],
             headroom_size: frame_headroom,
             config,
             _ebpf: ebpf,
@@ -271,7 +266,7 @@ impl AfXdp {
                     let queue_buf = &mut self.recycle_bufs[pkt.queue_id as usize];
                     let queue_id = pkt.queue_id;
                     queue_buf.push(pkt);
-                    if queue_buf.len() >= self.config.recycle_buf_size {
+                    if queue_buf.len() >= self.config.recycle_buff_size {
                         self.fill_queue(queue_id);
                     }
                 }
@@ -341,18 +336,23 @@ impl AfXdp {
     }
 }
 
-#[derive(Debug, Clone)]
+pub fn default_headroom_size() -> u32 {
+    std::mem::size_of::<AfXdpPacketMeta>() as u32
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct AfXdpConfig {
     pub rx_queue_len: u32,
     pub tx_queue_len: u32,
     pub fill_queue_len: u32,
     pub completion_queue_len: u32,
     pub frame_size: u32,
+    #[serde(default = "default_headroom_size")]
     pub headroom_size: u32,
     pub hugepage: bool,
     pub zcopy: bool,
     pub pkt_recycle_channel_size: usize,
-    pub recycle_buf_size: usize,
+    pub recycle_buff_size: usize,
 }
 
 impl Default for AfXdpConfig {
@@ -363,11 +363,11 @@ impl Default for AfXdpConfig {
             fill_queue_len: 2048,    // rx_queue_len * 2
             completion_queue_len: 8, // tx_queue_len
             frame_size: 2048,
-            headroom_size: std::mem::size_of::<AfXdpPacketMeta>() as u32,
+            headroom_size: default_headroom_size(),
             hugepage: false,
             zcopy: false,
             pkt_recycle_channel_size: 1024,
-            recycle_buf_size: 128,
+            recycle_buff_size: 128,
         }
     }
 }
@@ -398,6 +398,11 @@ impl AfXdpBuilder {
         self
     }
 
+    pub fn headroom_size(mut self, size: u32) -> Self {
+        self.config.headroom_size = size;
+        self
+    }
+
     pub fn frame_headroom(mut self, headroom: u32) -> Self {
         self.config.headroom_size = headroom;
         self
@@ -419,7 +424,7 @@ impl AfXdpBuilder {
     }
 
     pub fn recycle_buff_size(mut self, size: usize) -> Self {
-        self.config.recycle_buf_size = size;
+        self.config.recycle_buff_size = size;
         self
     }
 
@@ -441,7 +446,7 @@ pub struct RecyclePkt {
 }
 
 #[repr(C)]
-struct AfXdpPacketMeta {
+pub struct AfXdpPacketMeta {
     ref_count: AtomicU32,
 }
 

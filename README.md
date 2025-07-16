@@ -1,54 +1,57 @@
 # nsave
+
 nsave is a tool for capturing and saving data packets. It continuously captures packets and saves them locally. You can query connections and packets based on conditions and export them as pcap files.
 
-It is currently in the prototype stage and should not be used in critical production environments.
+It is currently in the development stage; do not utilize it in critical production environments.
+
 
 # Operating Environment
-Linux, macOS.
+
+Linux
+
 
 # Configuration
-The configuration items are as follows:
-```toml
-interface = "en1"
-pkt_len = 2000
-filter = "tcp"
-daemon = true
 
-# pcap_file = "~/misc/https.pcap"
-store_path = "/Users/lch/misc/nsave_data/"
-
-# Number of threads writing to disk
-thread_num = 2
-
-pkt_channel_size = 2048
-msg_channel_size = 1024
-# Microseconds. 500 milliseconds
-timer_interval = 500000000
-# Milliseconds
-writer_empty_sleep = 5
-# Milliseconds
-clean_empty_sleep = 100
-
-# 16M 1024 * 1024 * 16
-pool_size = 16777216
-# 2M 1024 * 1024 * 2
-file_size = 2097152
-# 80k 1024 * 80
-chunk_size = 81920
-
-ci_buff_size = 1024
-ti_buff_size = 1024
-
-flow_max_table_capacity = 1024
-# Microseconds. 10 seconds
-flow_node_timeout = 10000000000
-flow_max_seq_gap = 8
+```shell
+cp nsave_conf.toml ~/.nsave_conf.toml
 ```
-Place the configuration file `.nsave.toml` in the current user's directory.
 
-# Running
-Execute nsave, and it will start continuously capturing packets and saving them locally.
+# Prerequisites
 
+1. stable rust toolchains: `rustup toolchain install stable`
+1. nightly rust toolchains: `rustup toolchain install nightly --component rust-src`
+1. (if cross-compiling) rustup target: `rustup target add ${ARCH}-unknown-linux-musl`
+1. (if cross-compiling) LLVM: (e.g.) `brew install llvm` (on macOS)
+1. (if cross-compiling) C toolchain: (e.g.) [`brew install filosottile/musl-cross/musl-cross`](https://github.com/FiloSottile/homebrew-musl-cross) (on macOS)
+1. bpf-linker: `cargo install bpf-linker` (`--no-default-features` on macOS)
+
+
+# Build & Run
+
+Use `cargo build`, `cargo check`, etc. as normal. Run your program with:
+
+```shell
+RUST_LOG=info cargo run --bin nsave --config 'target."cfg(all())".runner="sudo -E"' -- --iface ens192
+cargo run --release --bin nsave --config 'target."cfg(all())".runner="sudo -E"' -- --iface ens192
+```
+
+Cargo build scripts are used to automatically build the eBPF correctly and include it in the
+program.
+
+
+# Cross-compiling on macOS
+
+Cross compilation should work on both Intel and Apple Silicon Macs.
+
+```shell
+CC=${ARCH}-linux-musl-gcc cargo build --package nsave --release \
+  --target=${ARCH}-unknown-linux-musl \
+  --config=target.${ARCH}-unknown-linux-musl.linker=\"${ARCH}-linux-musl-gcc\"
+```
+The cross-compiled program `target/${ARCH}-unknown-linux-musl/release/nsave` can be
+copied to a Linux server or VM and run there.
+
+ 
 # Querying
 You can query connections or packets based on time, five-tuple, or BPF filters.
 

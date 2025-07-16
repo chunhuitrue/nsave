@@ -118,7 +118,9 @@ impl Write for MmapBufWriter {
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        self.mmap.as_ref().unwrap().flush()?;
+        if let Some(mmap) = &self.mmap {
+            mmap.flush()?;
+        }
         self.mmap = None;
         self.unlock_mmap()?;
         Ok(())

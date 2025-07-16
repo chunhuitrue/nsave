@@ -2,6 +2,7 @@ use crate::configure::*;
 use anyhow::Result;
 use chrono::{DateTime, Datelike, Local, NaiveDateTime, TimeZone, Timelike};
 use libc::timeval;
+use log::info;
 use network_types::{
     eth::{EthHdr, EtherType},
     ip::{IpProto, Ipv4Hdr, Ipv6Hdr},
@@ -48,7 +49,6 @@ struct ifreq {
     ifr_flags: libc::c_short,
 }
 
-/// 设置网卡混杂模式
 pub fn set_promiscuous_mode(interface_name: &str, enable: bool) -> Result<()> {
     // 创建一个socket用于ioctl调用
     let sock_fd = unsafe { libc::socket(libc::AF_INET, libc::SOCK_DGRAM, 0) };
@@ -91,10 +91,8 @@ pub fn set_promiscuous_mode(interface_name: &str, enable: bool) -> Result<()> {
     // 设置或清除混杂模式标志
     if enable {
         ifr.ifr_flags |= IFF_PROMISC;
-        println!("Enabling promiscuous mode on interface {interface_name}");
     } else {
         ifr.ifr_flags &= !IFF_PROMISC;
-        println!("Disabling promiscuous mode on interface {interface_name}");
     }
 
     // 设置新的标志
@@ -105,9 +103,8 @@ pub fn set_promiscuous_mode(interface_name: &str, enable: bool) -> Result<()> {
             std::io::Error::last_os_error()
         ));
     }
-
-    println!(
-        "Successfully {} promiscuous mode on {}",
+    info!(
+        "Info: Successfully {} promiscuous mode on {}",
         if enable { "enabled" } else { "disabled" },
         interface_name
     );
@@ -576,7 +573,7 @@ pub fn timenow() -> u128 {
 
 pub fn date2dir(configure: &'static Configure, dir_id: u64, date: NaiveDateTime) -> PathBuf {
     let mut path = PathBuf::new();
-    path.push(configure.store_path.clone());
+    path.push(configure.main.store_path.clone());
     path.push(format!("{dir_id:03}"));
     path.push(format!("{:04}", date.year()));
     path.push(format!("{:02}", date.month()));

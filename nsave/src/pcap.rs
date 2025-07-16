@@ -3,6 +3,7 @@ use anyhow::{Result, anyhow};
 use crossbeam_channel::{Receiver, Sender, TryRecvError, bounded};
 use network_types::{eth::EtherType, ip::IpProto};
 use pcap::{Activated, Capture as PcapCap, Device};
+use serde::Deserialize;
 use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::net::IpAddr;
@@ -115,7 +116,7 @@ impl Pcap {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct PcapConfig {
     pub filter: Option<String>,
     pub pcap_file: Option<String>,

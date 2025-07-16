@@ -1,0 +1,52 @@
+[main]
+interface = "ens192"
+capture   = "af_xdp"
+filter    = "tcp"
+daemon    = false
+
+store_path = "~/misc/nsave_data/"
+
+# Number of disk writing threads
+thread_num = 2
+
+pkt_channel_size   = 2048
+msg_channel_size   = 1024
+# Microseconds. 500 milliseconds
+timer_intervel     = 500000000
+# Milliseconds
+writer_empty_sleep = 5
+# Milliseconds
+clean_empty_sleep  = 100
+
+# 16M 1024 * 1024 * 16
+pool_size  = 16777216
+# 2M 1024 * 1024 * 2
+file_size  = 2097152
+# 80k 1024 * 80
+chunk_size = 81920
+
+ci_buff_size = 1024
+ti_buff_size = 1024
+
+flow_max_table_capacity = 1024
+# Microseconds. 10 seconds
+flow_node_timeout       = 10000000000
+flow_max_seq_gap        = 8
+
+[af_xdp]
+rx_queue_len             = 1024
+tx_queue_len             = 8
+fill_queue_len           = 2048
+completion_queue_len     = 8
+frame_size               = 2048
+hugepage                 = false
+zcopy                    = false
+pkt_recycle_channel_size = 1024
+recycle_buff_size        = 128
+
+[pcap]
+filter                   = "tcp"
+pcap_file                = "~/misc/imap_modified.pcap"
+pkt_recycle_channel_size = 1024
+buffer_pool_size         = 1024 # Number of packet memory pools
+buffer_size              = 2048 # Maximum size of packet buffer

@@ -45,7 +45,7 @@ impl TimeIndex {
                 self.buf_writer = Some(MmapBufWriter::with_arg(
                     fd,
                     meta.len(),
-                    self.configure.ti_buff_size,
+                    self.configure.main.ti_buff_size,
                 ));
             }
             Err(e) => return Err(StoreError::IoError(e)),

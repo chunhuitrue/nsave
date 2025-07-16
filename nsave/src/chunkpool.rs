@@ -149,7 +149,6 @@ impl ChunkPool {
         let chunk_u8: &mut [u8] = chunk_map.as_mut().unwrap();
         let mut chunk_offset = &mut chunk_u8[pkt_start as usize..];
 
-        println!("chunkpool write 222...");
         pkt.serialize_into(&mut chunk_offset)?;
         self.chunk_head.borrow_mut().as_mut().unwrap().filled_size += pkt.serialize_size();
         self.chunk_head.borrow_mut().as_mut().unwrap().end_time = now;
@@ -219,8 +218,6 @@ impl ChunkPool {
     where
         F: Fn(PathBuf, u128),
     {
-        println!("chunkpool next chunk...");
-
         let chunk_id = self.pool_head.borrow().as_ref().unwrap().next_chunk_id;
         let file_id = chunk_id / self.file_chunk_num;
         if self.chunk_file_id.borrow().is_none() || self.chunk_file_id.borrow().unwrap() != file_id

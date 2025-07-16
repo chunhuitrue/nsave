@@ -1,12 +1,16 @@
+use crate::af_xdp::*;
 use crate::capture::*;
 use crate::common::*;
 use crate::configure::*;
 use crate::flow::*;
+use crate::pcap::PcapConfig;
+use crate::store::*;
 use anyhow::anyhow;
 use clap::{Command, arg, value_parser};
 use crossbeam_channel::{self, Receiver, Sender, TryRecvError, TrySendError};
 use daemonize::Daemonize;
 use libnsave::*;
+use log::{error, info, warn};
 use std::fs::File;
 use std::{
     path::PathBuf,
@@ -17,7 +21,6 @@ use std::{
     thread,
     time::Duration,
 };
-use store::*;
 
 #[cfg(feature = "debug_mode")]
 #[tokio::main]
@@ -44,20 +47,22 @@ fn main_internal() -> anyhow::Result<()> {
     let configure = if let Ok(conf) = Configure::load(&conf_file) {
         conf
     } else {
-        println!("Need set configure file");
+        error!("Error: Need set configure file");
         return Err(anyhow!(""));
     };
 
-    if configure.daemon {
-        let mut std_out_path = PathBuf::from(configure.store_path.clone());
+    env_logger::init();
+
+    if configure.main.daemon {
+        let mut std_out_path = PathBuf::from(configure.main.store_path.clone());
         std_out_path.push("nsave.out");
         let stdout = File::create(std_out_path).unwrap();
-        let mut std_err_path = PathBuf::from(configure.store_path.clone());
+        let mut std_err_path = PathBuf::from(configure.main.store_path.clone());
         std_err_path.push("nsave.err");
         let stderr = File::create(std_err_path).unwrap();
-        let mut pid_file = PathBuf::from(configure.store_path.clone());
+        let mut pid_file = PathBuf::from(configure.main.store_path.clone());
         pid_file.push("nsave.pid");
-        let work_dir = PathBuf::from(configure.store_path.clone());
+        let work_dir = PathBuf::from(configure.main.store_path.clone());
 
         Daemonize::new()
             .pid_file(pid_file)
@@ -72,12 +77,13 @@ fn main_internal() -> anyhow::Result<()> {
     let r = running.clone();
     ctrlc::set_handler(move || {
         r.store(false, Ordering::Relaxed);
+        let _ = set_promiscuous_mode(&configure.main.interface.clone(), false);
     })
     .expect("Error setting Ctrl-C handler");
 
-    let barrier = Arc::new(Barrier::new((configure.thread_num + 2) as usize));
+    let barrier = Arc::new(Barrier::new((configure.main.thread_num + 2) as usize));
     let mut decode_err: usize = 0;
-    let mut statis = (0..configure.thread_num)
+    let mut statis = (0..configure.main.thread_num)
         .map(|_| Statis::new())
         .collect::<Vec<Statis>>();
     let mut msg_rxs = vec![];
@@ -85,11 +91,12 @@ fn main_internal() -> anyhow::Result<()> {
     let mut writer_thds = vec![];
 
     // 写盘线程
-    for i in 0..configure.thread_num {
+    for i in 0..configure.main.thread_num {
         let barrier_writer = barrier.clone();
         let running_writer = running.clone();
-        let (msg_tx, msg_rx) = crossbeam_channel::bounded::<Msg>(configure.msg_channel_size);
-        let (pkt_tx, pkt_rx) = crossbeam_channel::bounded::<Packet>(configure.pkt_channel_size);
+        let (msg_tx, msg_rx) = crossbeam_channel::bounded::<Msg>(configure.main.msg_channel_size);
+        let (pkt_tx, pkt_rx) =
+            crossbeam_channel::bounded::<Packet>(configure.main.pkt_channel_size);
         let writer_thd = thread::spawn(move || {
             writer_thread(configure, barrier_writer, running_writer, i, pkt_rx, msg_tx);
         });
@@ -106,16 +113,58 @@ fn main_internal() -> anyhow::Result<()> {
     });
 
     // 设置混杂模式
-    let iface = configure.interface.clone();
+    let iface = configure.main.interface.clone();
     set_promiscuous_mode(&iface, true)?;
+
     // 创建capture
-    println!("Init capture...");
-    let config = CaptureConfig::af_xdp(iface.clone());
-    // let config = CaptureConfig::pcap_live(iface.clone());
+    let config = match configure.main.capture {
+        Some(crate::configure::CaptureType::AfXdp) => CaptureConfig::af_xdp(iface.clone())
+            .with_af_xdp_config(AfXdpConfig {
+                rx_queue_len: configure.af_xdp.rx_queue_len,
+                tx_queue_len: configure.af_xdp.tx_queue_len,
+                fill_queue_len: configure.af_xdp.fill_queue_len,
+                completion_queue_len: configure.af_xdp.completion_queue_len,
+                frame_size: configure.af_xdp.frame_size,
+                headroom_size: default_headroom_size(),
+                hugepage: configure.af_xdp.hugepage,
+                zcopy: configure.af_xdp.zcopy,
+                pkt_recycle_channel_size: configure.af_xdp.pkt_recycle_channel_size,
+                recycle_buff_size: configure.af_xdp.recycle_buff_size,
+            }),
+        Some(crate::configure::CaptureType::Pcap) => {
+            let pcap_config = PcapConfig {
+                filter: configure.pcap.filter.clone(),
+                pcap_file: configure.pcap.pcap_file.clone(),
+                pkt_recycle_channel_size: configure.pcap.pkt_recycle_channel_size,
+                buffer_pool_size: configure.pcap.buffer_pool_size,
+                buffer_size: configure.pcap.buffer_size,
+            };
+            if let Some(ref pcap_file) = configure.pcap.pcap_file {
+                CaptureConfig::pcap_file(pcap_file.clone()).with_pcap_config(pcap_config)
+            } else {
+                CaptureConfig::pcap_live(iface.clone()).with_pcap_config(pcap_config)
+            }
+        }
+        None => {
+            warn!("Warning: No capture type specified in config, defaulting to AF_XDP");
+            CaptureConfig::af_xdp(iface.clone()).with_af_xdp_config(crate::af_xdp::AfXdpConfig {
+                rx_queue_len: configure.af_xdp.rx_queue_len,
+                tx_queue_len: configure.af_xdp.tx_queue_len,
+                fill_queue_len: configure.af_xdp.fill_queue_len,
+                completion_queue_len: configure.af_xdp.completion_queue_len,
+                frame_size: configure.af_xdp.frame_size,
+                headroom_size: default_headroom_size(),
+                hugepage: configure.af_xdp.hugepage,
+                zcopy: configure.af_xdp.zcopy,
+                pkt_recycle_channel_size: configure.af_xdp.pkt_recycle_channel_size,
+                recycle_buff_size: configure.af_xdp.recycle_buff_size,
+            })
+        }
+    };
     let mut capture = create_capture(&config)?;
 
     // 分发线程
-    let thread_num = configure.thread_num;
+    let thread_num = configure.main.thread_num;
     barrier.wait();
     while running.load(Ordering::Relaxed) {
         capture.acquire_packets(|mut packet| {
@@ -135,16 +184,16 @@ fn main_internal() -> anyhow::Result<()> {
             }
         })?;
     }
-
     running.store(false, Ordering::Relaxed);
+
     for writer_thd in writer_thds {
         writer_thd.join().unwrap();
     }
     clean_thd.join().unwrap();
-    for i in 0..configure.thread_num {
+    for i in 0..configure.main.thread_num {
         let i: usize = i.try_into().unwrap();
-        println!(
-            "statis[{}] send_ok:{}, send_err:{}",
+        info!(
+            "Info: Statis[{}] send_ok:{}, send_err:{}",
             i, statis[i].send_ok, statis[i].send_err
         );
     }
@@ -173,9 +222,9 @@ fn writer_thread(
     msg_tx: Sender<Msg>,
 ) {
     let mut flow = Box::new(Flow::new_with_arg(
-        configure.flow_max_table_capacity,
-        configure.flow_node_timeout as u128,
-        configure.flow_max_seq_gap,
+        configure.main.flow_max_table_capacity,
+        configure.main.flow_node_timeout as u128,
+        configure.main.flow_max_seq_gap,
     ));
     let mut now;
     let mut prev_ts = timenow();
@@ -183,19 +232,20 @@ fn writer_thread(
     let mut flow_err: u64 = 0;
 
     let mut data_path = PathBuf::new();
-    data_path.push(&configure.store_path);
+    data_path.push(&configure.main.store_path);
     data_path.push(format!("{writer_id:03}"));
     let store = Store::new(configure, data_path, msg_tx);
     if let Err(e) = store.init() {
-        println!("packet store init error: {e}");
+        error!("Error: Store init error: {e}");
         return;
     }
 
     barrier.wait();
-    println!("writer: {writer_id:?} running...");
+    info!("Info: Writer: {writer_id:?} start");
     while running.load(Ordering::Relaxed) {
         match pkt_rx.try_recv() {
             Ok(pkt) => {
+                info!("Info: Writer: {writer_id:?} recv num : {recv_num}"); // todo del
                 recv_num += 1;
                 now = pkt.timestamp();
                 let mut remove_key = None;
@@ -207,7 +257,9 @@ fn writer_thread(
                     }
                     let store_ret = store.store(node, pkt, now);
                     if store_ret.is_err() {
-                        println!("writer {writer_id:?}, store err: {store_ret:?}.break");
+                        error!(
+                            "Error: Writer {writer_id:?}, store err: {store_ret:?}, break while."
+                        );
                         break;
                     }
 
@@ -224,16 +276,18 @@ fn writer_thread(
                 }
             }
             Err(TryRecvError::Empty) => {
-                thread::sleep(Duration::from_millis(configure.writer_empty_sleep as u64));
+                thread::sleep(Duration::from_millis(
+                    configure.main.writer_empty_sleep as u64,
+                ));
                 now = timenow();
             }
             Err(TryRecvError::Disconnected) => {
-                println!("writer_thread: {writer_id:?} recv disconnected");
+                error!("Error: Writer: {writer_id:?} recv disconnected.");
                 break;
             }
         }
 
-        if now > prev_ts + configure.timer_intervel as u128 {
+        if now > prev_ts + configure.main.timer_intervel as u128 {
             prev_ts = now;
 
             if store.timer(now).is_err() {
@@ -241,13 +295,14 @@ fn writer_thread(
             }
             flow.timeout(now, |node| {
                 if store.link_fin(&node.key, node.start_time, now).is_err() {
-                    println!("store link fin error. node key{:?}", &node.key);
+                    error!("Error: Store link fin error. node key{:?}", &node.key);
                 }
             });
         }
     }
+    running.store(false, Ordering::Relaxed);
     store.finish();
-    println!("writer: {writer_id:?} exit. recv pkt: {recv_num}, flow_err: {flow_err}");
+    info!("Info: Writer: {writer_id:?} exit. recv pkt: {recv_num}, flow_err: {flow_err}");
 }
 
 fn clean_thread(
@@ -257,7 +312,7 @@ fn clean_thread(
     msg_rxs: Vec<Receiver<Msg>>,
 ) {
     barrier.wait();
-    println!("clean thread running...");
+    info!("Info: Clean thread start");
     while running.load(Ordering::Relaxed) {
         for msg_rx in msg_rxs.iter() {
             match msg_rx.try_recv() {
@@ -265,16 +320,19 @@ fn clean_thread(
                     let _ = clean_index_dir(pool_path, ts_date(end_time));
                 }
                 Err(TryRecvError::Empty) => {
-                    thread::sleep(Duration::from_millis(configure.clean_empty_sleep as u64));
+                    thread::sleep(Duration::from_millis(
+                        configure.main.clean_empty_sleep as u64,
+                    ));
                 }
                 Err(TryRecvError::Disconnected) => {
-                    println!("clean_thread: {msg_rx:?} recv disconnected");
+                    error!("Error: Clean thread: {msg_rx:?} recv disconnected");
                     return;
                 }
             }
         }
     }
-    println!("clean thread end...");
+    running.store(false, Ordering::Relaxed);
+    info!("Info: Clean thread end");
 }
 
 struct Statis {
