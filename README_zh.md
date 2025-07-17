@@ -1,8 +1,11 @@
 # nsave
 
-nsave 是一个抓取并保存数据包的工具。它持续不断地抓取数据包，并保存到本地。可以根据条件查询链接、数据包并导出成pcap文件。
+Nsave 是一个抓取并保存数据包的工具。它持续不断地抓取数据包，并保存到本地。可以根据条件查询链接、数据包并导出成pcap文件。可以通过pcap 或者af_xdp来捕获数据包。主要特点是它不基于单个数据包，而是基于流来作索引，可以大幅减少索引所占的磁盘空间。
 
-目前是开发阶段，不要应用在关键的生产环境。
+
+# 提醒
+1. 目前是开发阶段，不要应用在关键的生产环境。
+1. 需要配置单独的抓包网卡。管理网卡不能用于抓包，否则你会失去连接，因为加载的xdp程序会把网卡上所有的数据包都截获，不再流入内核。
 
 
 # 运行环境
@@ -21,9 +24,6 @@ cp nsave_conf.toml ~/.nsave_conf.toml
 
 1. stable rust 工具链：`rustup toolchain install stable`
 1. nightly rust 工具链：`rustup toolchain install nightly --component rust-src`
-1. （如果交叉编译）rustup target：`rustup target add ${ARCH}-unknown-linux-musl`
-1. （如果交叉编译）LLVM：（例如）`brew install llvm`（在 macOS 上）
-1. （如果交叉编译）C 工具链：（例如）[`brew install filosottile/musl-cross/musl-cross`](https://github.com/FiloSottile/homebrew-musl-cross)（在 macOS 上）
 1. bpf-linker：`cargo install bpf-linker`（在 macOS 上使用 `--no-default-features`）
 
 
@@ -37,19 +37,6 @@ cargo run --release --bin nsave --config 'target."cfg(all())".runner="sudo -E"' 
 ```
 
 Cargo 构建脚本会自动正确构建 eBPF 并将其包含在程序中。
-
-
-# 在 macOS 上交叉编译
-
-交叉编译在 Intel 和 Apple Silicon Mac 上都应该可以工作。
-
-```shell
-CC=${ARCH}-linux-musl-gcc cargo build --package nsave --release \
-  --target=${ARCH}-unknown-linux-musl \
-  --config=target.${ARCH}-unknown-linux-musl.linker=\"${ARCH}-linux-musl-gcc\"
-```
-交叉编译的程序 `target/${ARCH}-unknown-linux-musl/release/nsave` 可以
-复制到 Linux 服务器或虚拟机上运行。
 
 
 # 查询

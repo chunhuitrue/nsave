@@ -1,8 +1,11 @@
 # nsave
 
-nsave is a tool for capturing and saving data packets. It continuously captures packets and saves them locally. You can query connections and packets based on conditions and export them as pcap files.
+Nsave is a tool for capturing and saving network packets. It continuously captures packets and saves them locally. It can query connections and packets based on conditions and export them as pcap files. It can capture packets through pcap or af_xdp. The main feature is that it doesn't index based on individual packets, but rather based on flows, which can significantly reduce the disk space occupied by indexes.
 
-It is currently in the development stage; do not utilize it in critical production environments.
+# Important Notes
+
+1. Currently in development stage, do not use in critical production environments.
+2. A dedicated network interface for packet capture must be configured. The management network interface cannot be used for packet capture, otherwise you will lose connection, because the loaded XDP program will intercept all packets on the network interface and they will no longer flow into the kernel.
 
 
 # Operating Environment
@@ -20,9 +23,6 @@ cp nsave_conf.toml ~/.nsave_conf.toml
 
 1. stable rust toolchains: `rustup toolchain install stable`
 1. nightly rust toolchains: `rustup toolchain install nightly --component rust-src`
-1. (if cross-compiling) rustup target: `rustup target add ${ARCH}-unknown-linux-musl`
-1. (if cross-compiling) LLVM: (e.g.) `brew install llvm` (on macOS)
-1. (if cross-compiling) C toolchain: (e.g.) [`brew install filosottile/musl-cross/musl-cross`](https://github.com/FiloSottile/homebrew-musl-cross) (on macOS)
 1. bpf-linker: `cargo install bpf-linker` (`--no-default-features` on macOS)
 
 
@@ -39,19 +39,6 @@ Cargo build scripts are used to automatically build the eBPF correctly and inclu
 program.
 
 
-# Cross-compiling on macOS
-
-Cross compilation should work on both Intel and Apple Silicon Macs.
-
-```shell
-CC=${ARCH}-linux-musl-gcc cargo build --package nsave --release \
-  --target=${ARCH}-unknown-linux-musl \
-  --config=target.${ARCH}-unknown-linux-musl.linker=\"${ARCH}-linux-musl-gcc\"
-```
-The cross-compiled program `target/${ARCH}-unknown-linux-musl/release/nsave` can be
-copied to a Linux server or VM and run there.
-
- 
 # Querying
 You can query connections or packets based on time, five-tuple, or BPF filters.
 
